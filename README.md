@@ -56,7 +56,7 @@ Local export artifacts are written to `.agent-dataset/exports`.
 
 ## Dataset backend
 
-This repo now includes a backend service in [server/README.md](server/README.md) for cloud session storage:
+This repo now includes a backend service in server/README.md for cloud session storage:
 
 - Prisma + Postgres
 - Bearer-token auth via `.env`
