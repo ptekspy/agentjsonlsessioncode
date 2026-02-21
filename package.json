@@ -134,14 +134,15 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "pnpm run build:package",
     "build:webview": "esbuild src/webview/main.tsx --bundle --platform=browser --format=iife --outfile=media/webview.js",
+    "build:package": "pnpm run build:webview && rm -rf out/lib out/sidebar out/test out/webview && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js",
     "compile": "pnpm run build:webview && tsc -p ./",
     "watch": "pnpm run build:webview && tsc -watch -p ./",
     "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "package": "vsce package"
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/vscode": "^1.109.0",
