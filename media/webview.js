@@ -21933,6 +21933,15 @@
           "button",
           {
             style: styles.button,
+            onClick: () => vscode.postMessage({ type: "submitFileChanges" }),
+            disabled: !state.isSessionActive,
+            children: "Submit File Changes"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            style: styles.button,
             onClick: () => vscode.postMessage({ type: "discardSession" }),
             disabled: !state.isSessionActive,
             children: "Discard Session"

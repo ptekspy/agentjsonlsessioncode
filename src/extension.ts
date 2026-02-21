@@ -315,6 +315,20 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.submitFileChanges', async () => {
+			try {
+				const snapshot = await sessionManager.submitFileChangesCheckpoint();
+				vscode.window.showInformationMessage(
+					`Submitted file changes (${snapshot.filesChanged} files, ${snapshot.operationsApplied} patch operations). You can continue with pnpm commands.`,
+				);
+				refreshSidebar();
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('dataset.stopSessionUpload', async () => {
 			try {
 				const result = await sessionManager.stopAndBuildLocalRecord(context);

@@ -36,6 +36,7 @@ type WebviewToExtension =
 	| { type: 'setApiToken' }
 	| { type: 'checkCloudConnection' }
 	| { type: 'startSession' }
+	| { type: 'submitFileChanges' }
 	| { type: 'stopSessionUpload' }
 	| {
 			type: 'runPnpmCommand';
@@ -295,6 +296,13 @@ function App() {
 					disabled={!state.isSessionActive}
 				>
 					Stop Session
+				</button>
+				<button
+					style={styles.button}
+					onClick={() => vscode.postMessage({ type: 'submitFileChanges' })}
+					disabled={!state.isSessionActive}
+				>
+					Submit File Changes
 				</button>
 				<button
 					style={styles.button}

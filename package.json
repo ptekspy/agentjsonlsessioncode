@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -65,6 +65,10 @@
       {
         "command": "dataset.startSession",
         "title": "Dataset: Start Session"
+      },
+      {
+        "command": "dataset.submitFileChanges",
+        "title": "Dataset: Submit File Changes"
       },
       {
         "command": "dataset.stopSessionUpload",

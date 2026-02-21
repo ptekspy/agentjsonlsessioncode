@@ -29,6 +29,7 @@ type SidebarAction =
 	| { type: 'setApiToken' }
 	| { type: 'checkCloudConnection' }
 	| { type: 'startSession' }
+	| { type: 'submitFileChanges' }
 	| { type: 'stopSessionUpload' }
 	| {
 			type: 'runPnpmCommand';
@@ -113,6 +114,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'setApiToken':
 			case 'checkCloudConnection':
 			case 'startSession':
+			case 'submitFileChanges':
 			case 'stopSessionUpload':
 			case 'runPnpmCommand':
 			case 'exportTaskJsonl':
@@ -216,6 +218,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				setApiToken: 'dataset.setApiToken',
 				checkCloudConnection: 'dataset.checkCloudConnection',
 				startSession: 'dataset.startSession',
+				submitFileChanges: 'dataset.submitFileChanges',
 				stopSessionUpload: 'dataset.stopSessionUpload',
 				discardSession: 'dataset.discardSession',
 			};

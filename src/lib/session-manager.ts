@@ -51,6 +51,10 @@ type ActiveSession = {
 	remote?: string;
 	commandsRun: string[];
 	runCmdEvents: RunCmdEvent[];
+	record: TrainingRecord;
+	callSeq: number;
+	fileChangesSubmitted: boolean;
+	submittedFilesChanged: number;
 	startedAt: string;
 };
 
@@ -125,6 +129,12 @@ export class SessionManager {
 			remote,
 			commandsRun: [],
 			runCmdEvents: [],
+			record: {
+				messages: [makeSystem(systemPrompt), makeUser(userPrompt)],
+			},
+			callSeq: 0,
+			fileChangesSubmitted: false,
+			submittedFilesChanged: 0,
 			startedAt: new Date().toISOString(),
 		};
 	}
@@ -164,6 +174,7 @@ export class SessionManager {
 
 		this.activeSession.runCmdEvents.push({ args: normalized, output });
 		this.activeSession.commandsRun.push(`pnpm ${normalized.args.join(' ')}`);
+		addRunCmd(this.activeSession.record, this.nextCallId(this.activeSession, 'run_cmd'), normalized, output);
 
 		if (failed) {
 			throw new Error(output || 'run_cmd failed');
@@ -172,50 +183,42 @@ export class SessionManager {
 		return output;
 	}
 
+	public async submitFileChangesCheckpoint(): Promise<{ filesChanged: number; operationsApplied: number }> {
+		if (!this.activeSession) {
+			throw new Error('Start a session before submitting file changes.');
+		}
+
+		if (this.activeSession.fileChangesSubmitted) {
+			throw new Error('File changes already submitted for this session.');
+		}
+
+		const snapshot = await this.appendFileChangesToRecord(this.activeSession);
+		if (snapshot.operationsApplied === 0) {
+			throw new Error('No file changes found to submit.');
+		}
+
+		this.activeSession.fileChangesSubmitted = true;
+		this.activeSession.submittedFilesChanged = snapshot.filesChanged;
+
+		return {
+			filesChanged: snapshot.filesChanged,
+			operationsApplied: snapshot.operationsApplied,
+		};
+	}
+
 	public async stopAndBuildLocalRecord(context: ExtensionContext): Promise<BuiltSessionResult> {
 		if (!this.activeSession) {
 			throw new Error('No active session to stop.');
 		}
 
 		const session = this.activeSession;
-		const changes = await this.getNameStatusChanges(session.repoRoot, session.baseRef);
-		const filtered = changes.filter((change) => this.isIncludedChange(change));
+		let filesChanged = session.submittedFilesChanged;
+		let hasApplyPatch = this.recordHasApplyPatch(session.record);
 
-		const record: TrainingRecord = {
-			messages: [makeSystem(session.systemPrompt), makeUser(session.userPrompt)],
-		};
-
-		let callSeq = 0;
-		const nextCallId = (prefix: string) => `${prefix}_${++callSeq}`;
-
-		for (const runCmdEvent of session.runCmdEvents) {
-			const callId = nextCallId('run_cmd');
-			addRunCmd(record, callId, runCmdEvent.args, runCmdEvent.output);
-		}
-
-		for (const change of filtered) {
-			if (change.kind === 'M' || change.kind === 'D') {
-				const callId = nextCallId('read');
-				record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: change.path }));
-				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.path);
-				record.messages.push(makeToolResultMessage(callId, content));
-			}
-
-			if (change.kind === 'R') {
-				const callId = nextCallId('read');
-				record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: change.oldPath }));
-				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.oldPath);
-				record.messages.push(makeToolResultMessage(callId, content));
-			}
-		}
-
-		const operations = await this.buildApplyPatchOperations(session.repoRoot, session.baseRef, filtered);
-		const hasApplyPatch = operations.length > 0;
-		if (operations.length > 0) {
-			const applyPatchCallId = nextCallId('apply_patch');
-			addApplyPatch(record, applyPatchCallId, {
-				data: { action: { operations } },
-			});
+		if (!session.fileChangesSubmitted) {
+			const snapshot = await this.appendFileChangesToRecord(session);
+			filesChanged = snapshot.filesChanged;
+			hasApplyPatch = snapshot.operationsApplied > 0;
 		}
 
 		const ranValidationCommand = session.commandsRun.some((command) =>
@@ -235,11 +238,11 @@ export class SessionManager {
 			createdAt: new Date().toISOString(),
 			startedAt: session.startedAt,
 			metrics: {
-				filesChanged: filtered.length,
+				filesChanged,
 				commandsRun: session.commandsRun,
 			},
 			status,
-			record,
+			record: session.record,
 		};
 
 		const folder = vscode.workspace.workspaceFolders?.[0];
@@ -259,6 +262,58 @@ export class SessionManager {
 		return {
 			outputPath,
 			payload,
+		};
+	}
+
+	private nextCallId(session: ActiveSession, prefix: string): string {
+		session.callSeq += 1;
+		return `${prefix}_${session.callSeq}`;
+	}
+
+	private recordHasApplyPatch(record: TrainingRecord): boolean {
+		return record.messages.some((message) => {
+			if (message.role !== 'assistant' || !('tool_calls' in message)) {
+				return false;
+			}
+			return message.tool_calls.some((call) => call.function.name === 'apply_patch');
+		});
+	}
+
+	private async appendFileChangesToRecord(
+		session: ActiveSession,
+	): Promise<{ filesChanged: number; operationsApplied: number }> {
+		const changes = await this.getNameStatusChanges(session.repoRoot, session.baseRef);
+		const filtered = changes.filter((change) => this.isIncludedChange(change));
+
+		for (const change of filtered) {
+			if (change.kind === 'M' || change.kind === 'D') {
+				const callId = this.nextCallId(session, 'read');
+				session.record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: change.path }));
+				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.path);
+				session.record.messages.push(makeToolResultMessage(callId, content));
+			}
+
+			if (change.kind === 'R') {
+				const callId = this.nextCallId(session, 'read');
+				session.record.messages.push(
+					makeToolCallMessage(callId, 'repo.readFile', { path: change.oldPath }),
+				);
+				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.oldPath);
+				session.record.messages.push(makeToolResultMessage(callId, content));
+			}
+		}
+
+		const operations = await this.buildApplyPatchOperations(session.repoRoot, session.baseRef, filtered);
+		if (operations.length > 0) {
+			const applyPatchCallId = this.nextCallId(session, 'apply_patch');
+			addApplyPatch(session.record, applyPatchCallId, {
+				data: { action: { operations } },
+			});
+		}
+
+		return {
+			filesChanged: filtered.length,
+			operationsApplied: operations.length,
 		};
 	}
 
