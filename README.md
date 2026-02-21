@@ -14,7 +14,7 @@ VS Code extension for recording clean coding sessions into tool-trace training r
 
 ## Quick start
 
-1. Start backend in [server/README.md](server/README.md)
+1. Start backend in server/README.md
 2. In VS Code settings, set `dataset.apiBaseUrl`
 3. Run command: `Dataset: Set API Token`
 4. Open Dataset activity bar view and run:
