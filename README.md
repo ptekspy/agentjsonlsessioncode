@@ -69,3 +69,11 @@ You can author your README using Visual Studio Code. Here are some useful editor
 * [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
 
 **Enjoy!**
+
+## Dataset backend
+
+This repo now includes a backend service in [server/README.md](server/README.md) for cloud session storage:
+
+- Prisma + Postgres
+- Bearer-token auth via `.env`
+- Endpoints: `/health`, `/tasks`, `/sessions`, `/export.jsonl`

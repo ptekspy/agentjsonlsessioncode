@@ -12,17 +12,65 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "datasetRecorder",
+          "title": "Dataset",
+          "icon": "media/dataset.svg"
+        }
+      ]
+    },
+    "views": {
+      "datasetRecorder": [
+        {
+          "id": "dataset.sidebarView",
+          "name": "Session Recorder"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "agentjsonlsessioncode.helloWorld",
-        "title": "Hello World"
+        "command": "dataset.selectTask",
+        "title": "Dataset: Select Task"
+      },
+      {
+        "command": "dataset.createTask",
+        "title": "Dataset: Create Task"
+      },
+      {
+        "command": "dataset.setApiToken",
+        "title": "Dataset: Set API Token"
+      },
+      {
+        "command": "dataset.startSession",
+        "title": "Dataset: Start Session"
+      },
+      {
+        "command": "dataset.stopSessionUpload",
+        "title": "Dataset: Stop Session (Upload)"
+      },
+      {
+        "command": "dataset.discardSession",
+        "title": "Dataset: Discard Session"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Dataset Recorder",
+      "properties": {
+        "dataset.apiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for dataset backend API"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "build:webview": "esbuild src/webview/main.tsx --bundle --platform=browser --format=iife --outfile=media/webview.js",
+    "compile": "pnpm run build:webview && tsc -p ./",
+    "watch": "pnpm run build:webview && tsc -watch -p ./",
     "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src",
     "test": "vscode-test"
@@ -31,10 +79,18 @@
     "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
     "typescript-eslint": "^8.54.0",
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.10"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^3.25.76"
   }
 }

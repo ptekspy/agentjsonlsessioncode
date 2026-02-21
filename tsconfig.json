@@ -2,9 +2,12 @@
 	"compilerOptions": {
 		"module": "Node16",
 		"target": "ES2022",
+		"jsx": "react-jsx",
 		"outDir": "out",
 		"lib": [
-			"ES2022"
+			"ES2022",
+			"DOM",
+			"DOM.Iterable"
 		],
 		"sourceMap": true,
 		"rootDir": "src",
