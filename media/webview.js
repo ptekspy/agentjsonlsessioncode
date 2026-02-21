@@ -21895,16 +21895,33 @@
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "recent" }),
         (state.recentArtifacts ?? []).length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "No local artifacts yet." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.recentList, children: (state.recentArtifacts ?? []).map((artifact) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-          "button",
+          "div",
           {
             style: styles.recentItem,
-            onClick: () => vscode.postMessage({ type: "openRecentArtifact", payload: { path: artifact.path } }),
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: styles.recentTitle, children: [
-                artifact.type === "session" ? "Session" : "Export",
-                artifact.status ? ` \u2022 ${artifact.status}` : ""
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.recentMeta, children: formatRelativeTime(artifact.createdAt) })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "button",
+                {
+                  style: styles.recentOpenButton,
+                  onClick: () => vscode.postMessage({ type: "openRecentArtifact", payload: { path: artifact.path } }),
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: styles.recentTitle, children: [
+                      artifact.type === "session" ? "Session" : "Export",
+                      artifact.status ? ` \u2022 ${artifact.status}` : ""
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.recentMeta, children: formatRelativeTime(artifact.createdAt) })
+                  ]
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  style: styles.deleteButton,
+                  title: "Delete artifact",
+                  onClick: () => vscode.postMessage({ type: "deleteRecentArtifact", payload: { path: artifact.path } }),
+                  children: "\u{1F5D1}"
+                }
+              )
             ]
           },
           `${artifact.type}:${artifact.path}`
@@ -22020,12 +22037,33 @@
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
+      gap: 6,
       padding: "6px 8px",
       borderRadius: 6,
       border: "1px solid var(--vscode-input-border)",
-      background: "var(--vscode-editor-background)",
+      background: "var(--vscode-editor-background)"
+    },
+    recentOpenButton: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 8,
+      width: "100%",
+      padding: 0,
+      background: "transparent",
+      border: "none",
       color: "var(--vscode-foreground)",
-      cursor: "pointer"
+      cursor: "pointer",
+      textAlign: "left"
+    },
+    deleteButton: {
+      padding: "2px 6px",
+      borderRadius: 6,
+      border: "1px solid var(--vscode-input-border)",
+      background: "var(--vscode-editorWidget-background)",
+      color: "var(--vscode-foreground)",
+      cursor: "pointer",
+      lineHeight: 1
     },
     recentTitle: {
       fontSize: "0.78rem",

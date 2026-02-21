@@ -48,6 +48,7 @@ type SidebarAction =
 			};
 	  }
 	| { type: 'openRecentArtifact'; payload: { path: string } }
+	| { type: 'deleteRecentArtifact'; payload: { path: string } }
 	| { type: 'discardSession' };
 
 export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
@@ -119,6 +120,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'runPnpmCommand':
 			case 'exportTaskJsonl':
 			case 'openRecentArtifact':
+			case 'deleteRecentArtifact':
 			case 'discardSession':
 				if (maybeType === 'runPnpmCommand') {
 					const payload = (raw as { payload?: unknown }).payload;
@@ -180,6 +182,17 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 					}
 					return { type: 'openRecentArtifact', payload: { path } };
 				}
+				if (maybeType === 'deleteRecentArtifact') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return undefined;
+					}
+					const path = (payload as { path?: unknown }).path;
+					if (typeof path !== 'string' || path.length === 0) {
+						return undefined;
+					}
+					return { type: 'deleteRecentArtifact', payload: { path } };
+				}
 				return { type: maybeType };
 			default:
 				return undefined;
@@ -210,7 +223,13 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
-			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'openRecentArtifact'>, string> = {
+			if (action.type === 'deleteRecentArtifact') {
+				await vscode.commands.executeCommand('dataset.deleteRecentArtifact', action.payload.path);
+				this.refresh();
+				return;
+			}
+
+			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'openRecentArtifact' | 'deleteRecentArtifact'>, string> = {
 				selectTask: 'dataset.selectTask',
 				createTask: 'dataset.createTask',
 				setupCloud: 'dataset.setupCloud',

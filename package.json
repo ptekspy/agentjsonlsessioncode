@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -77,6 +77,10 @@
       {
         "command": "dataset.exportTaskJsonl",
         "title": "Dataset: Export Task JSONL"
+      },
+      {
+        "command": "dataset.deleteRecentArtifact",
+        "title": "Dataset: Delete Recent Artifact"
       },
       {
         "command": "dataset.discardSession",

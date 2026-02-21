@@ -55,6 +55,7 @@ type WebviewToExtension =
 			};
 	  }
 	| { type: 'openRecentArtifact'; payload: { path: string } }
+	| { type: 'deleteRecentArtifact'; payload: { path: string } }
 	| { type: 'discardSession' };
 
 declare function acquireVsCodeApi(): {
@@ -262,19 +263,32 @@ function App() {
 				) : (
 					<div style={styles.recentList}>
 						{(state.recentArtifacts ?? []).map((artifact) => (
-							<button
+							<div
 								key={`${artifact.type}:${artifact.path}`}
 								style={styles.recentItem}
-								onClick={() =>
-									vscode.postMessage({ type: 'openRecentArtifact', payload: { path: artifact.path } })
-								}
 							>
-								<span style={styles.recentTitle}>
-									{artifact.type === 'session' ? 'Session' : 'Export'}
-									{artifact.status ? ` • ${artifact.status}` : ''}
-								</span>
-								<span style={styles.recentMeta}>{formatRelativeTime(artifact.createdAt)}</span>
-							</button>
+								<button
+									style={styles.recentOpenButton}
+									onClick={() =>
+										vscode.postMessage({ type: 'openRecentArtifact', payload: { path: artifact.path } })
+									}
+								>
+									<span style={styles.recentTitle}>
+										{artifact.type === 'session' ? 'Session' : 'Export'}
+										{artifact.status ? ` • ${artifact.status}` : ''}
+									</span>
+									<span style={styles.recentMeta}>{formatRelativeTime(artifact.createdAt)}</span>
+								</button>
+								<button
+									style={styles.deleteButton}
+									title="Delete artifact"
+									onClick={() =>
+										vscode.postMessage({ type: 'deleteRecentArtifact', payload: { path: artifact.path } })
+									}
+								>
+									🗑
+								</button>
+							</div>
 						))}
 					</div>
 				)}
@@ -387,12 +401,33 @@ const styles: Record<string, React.CSSProperties> = {
 		display: 'flex',
 		justifyContent: 'space-between',
 		alignItems: 'center',
+		gap: 6,
 		padding: '6px 8px',
 		borderRadius: 6,
 		border: '1px solid var(--vscode-input-border)',
 		background: 'var(--vscode-editor-background)',
+	},
+	recentOpenButton: {
+		display: 'flex',
+		justifyContent: 'space-between',
+		alignItems: 'center',
+		gap: 8,
+		width: '100%',
+		padding: 0,
+		background: 'transparent',
+		border: 'none',
 		color: 'var(--vscode-foreground)',
 		cursor: 'pointer',
+		textAlign: 'left',
+	},
+	deleteButton: {
+		padding: '2px 6px',
+		borderRadius: 6,
+		border: '1px solid var(--vscode-input-border)',
+		background: 'var(--vscode-editorWidget-background)',
+		color: 'var(--vscode-foreground)',
+		cursor: 'pointer',
+		lineHeight: 1,
 	},
 	recentTitle: {
 		fontSize: '0.78rem',

@@ -242,7 +242,9 @@ export class SessionManager {
 				commandsRun: session.commandsRun,
 			},
 			status,
-			record: session.record,
+			record: {
+				messages: [...session.record.messages, { role: 'assistant' as const, content: 'Done.' }],
+			},
 		};
 
 		const folder = vscode.workspace.workspaceFolders?.[0];
@@ -408,7 +410,15 @@ export class SessionManager {
 		if (idx < 0) {
 			return '';
 		}
-		return fullDiff.slice(idx);
+
+		const body = fullDiff
+			.slice(idx)
+			.split('\n')
+			.filter((line) => !line.startsWith('@@'))
+			.join('\n')
+			.trim();
+
+		return body;
 	}
 
 	private async safeGitShow(repoRoot: string, baseRef: string, filePath: string): Promise<string> {

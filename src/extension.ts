@@ -255,6 +255,39 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.deleteRecentArtifact', async (artifactPath: string) => {
+			try {
+				if (!artifactPath || typeof artifactPath !== 'string') {
+					return;
+				}
+
+				const recentArtifacts =
+					context.globalState.get<RecentArtifact[]>('dataset.recentArtifacts') ?? [];
+				const artifact = recentArtifacts.find((entry) => entry.path === artifactPath);
+				const artifactLabel = artifact?.type === 'export' ? 'export' : 'session';
+
+				const confirmed = await vscode.window.showWarningMessage(
+					`Delete this recent ${artifactLabel} artifact from disk?`,
+					{ modal: true },
+					'Delete',
+				);
+
+				if (confirmed !== 'Delete') {
+					return;
+				}
+
+				await fs.rm(artifactPath, { force: true });
+				const nextArtifacts = recentArtifacts.filter((entry) => entry.path !== artifactPath);
+				await context.globalState.update('dataset.recentArtifacts', nextArtifacts);
+				refreshSidebar();
+				vscode.window.showInformationMessage('Recent artifact deleted.');
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('dataset.startSession', async () => {
 			try {
 				const taskId =
