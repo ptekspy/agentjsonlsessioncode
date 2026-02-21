@@ -21732,6 +21732,8 @@
     const [filter, setFilter] = (0, import_react.useState)("");
     const [packages, setPackages] = (0, import_react.useState)("");
     const [timeoutSec, setTimeoutSec] = (0, import_react.useState)("120");
+    const [exportSince, setExportSince] = (0, import_react.useState)("");
+    const [exportLimit, setExportLimit] = (0, import_react.useState)("");
     (0, import_react.useEffect)(() => {
       const listener = (event) => {
         const message = event.data;
@@ -21759,8 +21761,28 @@
         }
       });
     };
+    const runExport = () => {
+      const since = exportSince.trim();
+      const limitRaw = Number(exportLimit);
+      vscode.postMessage({
+        type: "exportTaskJsonl",
+        payload: {
+          since: since.length > 0 ? since : void 0,
+          limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : void 0
+        }
+      });
+    };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("main", { style: styles.container, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { style: styles.title, children: "Session Recorder" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.headerRow, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { style: styles.title, children: "Session Recorder" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.cloudMeta, children: [
+          state.cloudStatus ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: getCloudBadgeStyle(state.cloudStatus), children: formatCloudStatus(state.cloudStatus) }) : null,
+          state.lastCloudCheckAt ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: styles.cloudTimestamp, children: [
+            "Last check: ",
+            formatTimestamp(state.lastCloudCheckAt)
+          ] }) : null
+        ] })
+      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
         "Task: ",
         state.taskId || "default"
@@ -21769,16 +21791,37 @@
         "Status: ",
         statusText
       ] }),
+      state.lastSessionSummary ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
+        "Last Session: ",
+        state.lastSessionSummary.filesChanged,
+        " files,",
+        " ",
+        state.lastSessionSummary.commandsRecorded,
+        " commands"
+      ] }) : null,
+      state.lastSessionStatus ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.qualityRow, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.meta, children: "Last Session Quality:" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: getQualityBadgeStyle(state.lastSessionStatus), children: state.lastSessionStatus })
+      ] }) : null,
       state.lastRecordPath ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.path, children: [
         "Last record: ",
         state.lastRecordPath
       ] }) : null,
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "selectTask" }), children: "Select Task" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "createTask" }), children: "Create Task" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiToken" }), children: "Set API Token" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiToken" }), children: "Set API Token" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            style: styles.button,
+            onClick: () => vscode.postMessage({ type: "checkCloudConnection" }),
+            disabled: Boolean(state.isCloudChecking),
+            children: state.isCloudChecking ? "Checking Cloud\u2026" : "Check Cloud Connection"
+          }
+        )
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "run_cmd" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "input",
@@ -21790,6 +21833,7 @@
             disabled: !state.isSessionActive
           }
         ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Optional workspace selector used as `--filter <value>`." }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "input",
           {
@@ -21800,6 +21844,7 @@
             disabled: !state.isSessionActive
           }
         ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Used only for `add`, `add -D`, and `remove` actions." }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "input",
           {
@@ -21810,15 +21855,60 @@
             disabled: !state.isSessionActive
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("install"), disabled: !state.isSessionActive, children: "pnpm i" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("add"), disabled: !state.isSessionActive, children: "pnpm add" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("addDev"), disabled: !state.isSessionActive, children: "pnpm add -D" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("remove"), disabled: !state.isSessionActive, children: "pnpm remove" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("lint"), disabled: !state.isSessionActive, children: "pnpm lint" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("test"), disabled: !state.isSessionActive, children: "pnpm test" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("build"), disabled: !state.isSessionActive, children: "pnpm build" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Command timeout in seconds (defaults to 120)." }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.buttonGrid, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("install"), disabled: !state.isSessionActive, children: "pnpm i" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("add"), disabled: !state.isSessionActive, children: "pnpm add" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("addDev"), disabled: !state.isSessionActive, children: "pnpm add -D" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("remove"), disabled: !state.isSessionActive, children: "pnpm remove" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("lint"), disabled: !state.isSessionActive, children: "pnpm lint" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("test"), disabled: !state.isSessionActive, children: "pnpm test" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("build"), disabled: !state.isSessionActive, children: "pnpm build" })
+        ] })
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "export" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
+            placeholder: "since (ISO datetime, optional)",
+            value: exportSince,
+            onChange: (event) => setExportSince(event.target.value)
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Example: 2026-02-21T20:00:00.000Z" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
+            placeholder: "limit (optional)",
+            value: exportLimit,
+            onChange: (event) => setExportLimit(event.target.value)
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Maximum number of sessions to export." }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: runExport, children: "Export Task JSONL" })
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "recent" }),
+        (state.recentArtifacts ?? []).length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "No local artifacts yet." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.recentList, children: (state.recentArtifacts ?? []).map((artifact) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "button",
+          {
+            style: styles.recentItem,
+            onClick: () => vscode.postMessage({ type: "openRecentArtifact", payload: { path: artifact.path } }),
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: styles.recentTitle, children: [
+                artifact.type === "session" ? "Session" : "Export",
+                artifact.status ? ` \u2022 ${artifact.status}` : ""
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.recentMeta, children: formatRelativeTime(artifact.createdAt) })
+            ]
+          },
+          `${artifact.type}:${artifact.path}`
+        )) })
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",
           {
@@ -21841,20 +21931,12 @@
           "button",
           {
             style: styles.button,
-            onClick: () => vscode.postMessage({ type: "exportTaskJsonl" }),
-            children: "Export Task JSONL"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            style: styles.button,
             onClick: () => vscode.postMessage({ type: "discardSession" }),
             disabled: !state.isSessionActive,
             children: "Discard Session"
           }
         )
-      ] })
+      ] }) })
     ] });
   }
   var styles = {
@@ -21867,6 +21949,22 @@
       flexDirection: "column",
       gap: 8
     },
+    headerRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      gap: 8
+    },
+    cloudMeta: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-end",
+      gap: 3
+    },
+    cloudTimestamp: {
+      fontSize: "0.68rem",
+      opacity: 0.7
+    },
     title: {
       fontSize: "1rem",
       margin: 0
@@ -21875,16 +21973,56 @@
       margin: 0,
       opacity: 0.9
     },
+    qualityRow: {
+      display: "flex",
+      alignItems: "center",
+      gap: 6
+    },
     path: {
       margin: 0,
       wordBreak: "break-all",
-      opacity: 0.85
+      opacity: 0.85,
+      fontSize: "0.82rem"
+    },
+    sectionCard: {
+      background: "var(--vscode-editorWidget-background)",
+      border: "1px solid var(--vscode-editorWidget-border)",
+      borderRadius: 8,
+      padding: 8
     },
     section: {
       display: "flex",
       flexDirection: "column",
-      gap: 6,
-      marginTop: 6
+      gap: 6
+    },
+    buttonGrid: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 6
+    },
+    recentList: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 6
+    },
+    recentItem: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "6px 8px",
+      borderRadius: 6,
+      border: "1px solid var(--vscode-input-border)",
+      background: "var(--vscode-editor-background)",
+      color: "var(--vscode-foreground)",
+      cursor: "pointer"
+    },
+    recentTitle: {
+      fontSize: "0.78rem",
+      fontWeight: 500
+    },
+    recentMeta: {
+      fontSize: "0.72rem",
+      opacity: 0.7
     },
     sectionTitle: {
       fontSize: "0.85rem",
@@ -21896,17 +22034,120 @@
       padding: "6px 8px",
       background: "var(--vscode-input-background)",
       border: "1px solid var(--vscode-input-border)",
+      borderRadius: 6,
       color: "var(--vscode-input-foreground)"
+    },
+    helperText: {
+      margin: "-2px 0 2px 0",
+      fontSize: "0.75rem",
+      opacity: 0.75,
+      lineHeight: 1.3
     },
     button: {
       padding: "6px 8px",
       background: "var(--vscode-button-background)",
-      border: "none",
+      border: "1px solid var(--vscode-input-border)",
+      borderRadius: 6,
       color: "var(--vscode-button-foreground)",
       cursor: "pointer",
-      textAlign: "left"
+      textAlign: "left",
+      fontWeight: 500
     }
   };
+  function getQualityBadgeStyle(status) {
+    if (status === "ready") {
+      return {
+        padding: "1px 6px",
+        borderRadius: 999,
+        background: "var(--vscode-badge-background)",
+        color: "var(--vscode-badge-foreground)",
+        border: "1px solid var(--vscode-testing-iconPassed)",
+        textTransform: "uppercase",
+        fontSize: "0.72rem",
+        letterSpacing: "0.04em"
+      };
+    }
+    return {
+      padding: "1px 6px",
+      borderRadius: 999,
+      background: "var(--vscode-badge-background)",
+      color: "var(--vscode-badge-foreground)",
+      border: "1px solid var(--vscode-input-border)",
+      textTransform: "uppercase",
+      fontSize: "0.72rem",
+      letterSpacing: "0.04em"
+    };
+  }
+  function getCloudBadgeStyle(status) {
+    if (status === "connected") {
+      return {
+        padding: "1px 6px",
+        borderRadius: 999,
+        background: "var(--vscode-badge-background)",
+        color: "var(--vscode-badge-foreground)",
+        border: "1px solid var(--vscode-testing-iconPassed)",
+        fontSize: "0.7rem"
+      };
+    }
+    if (status === "unreachable") {
+      return {
+        padding: "1px 6px",
+        borderRadius: 999,
+        background: "var(--vscode-badge-background)",
+        color: "var(--vscode-badge-foreground)",
+        border: "1px solid var(--vscode-testing-iconFailed)",
+        fontSize: "0.7rem"
+      };
+    }
+    return {
+      padding: "1px 6px",
+      borderRadius: 999,
+      background: "var(--vscode-badge-background)",
+      color: "var(--vscode-badge-foreground)",
+      border: "1px solid var(--vscode-input-border)",
+      fontSize: "0.7rem"
+    };
+  }
+  function formatCloudStatus(status) {
+    switch (status) {
+      case "connected":
+        return "Cloud: Connected";
+      case "url-missing":
+        return "Cloud: URL Missing";
+      case "token-missing":
+        return "Cloud: Token Missing";
+      case "unreachable":
+        return "Cloud: Unreachable";
+    }
+  }
+  function formatTimestamp(iso) {
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) {
+      return "unknown";
+    }
+    return parsed.toLocaleTimeString(void 0, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  }
+  function formatRelativeTime(iso) {
+    const value = new Date(iso).getTime();
+    if (Number.isNaN(value)) {
+      return "unknown";
+    }
+    const deltaSeconds = Math.max(0, Math.floor((Date.now() - value) / 1e3));
+    if (deltaSeconds < 60) {
+      return `${deltaSeconds}s ago`;
+    }
+    if (deltaSeconds < 3600) {
+      return `${Math.floor(deltaSeconds / 60)}m ago`;
+    }
+    if (deltaSeconds < 86400) {
+      return `${Math.floor(deltaSeconds / 3600)}h ago`;
+    }
+    return `${Math.floor(deltaSeconds / 86400)}d ago`;
+  }
   var rootElement = document.getElementById("root");
   if (rootElement) {
     (0, import_client.createRoot)(rootElement).render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(App, {}));

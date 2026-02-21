@@ -9,7 +9,9 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:dataset.sidebarView"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -25,7 +27,8 @@
       "datasetRecorder": [
         {
           "id": "dataset.sidebarView",
-          "name": "Session Recorder"
+          "name": "Session Recorder",
+          "type": "webview"
         }
       ]
     },
@@ -41,6 +44,10 @@
       {
         "command": "dataset.setApiToken",
         "title": "Dataset: Set API Token"
+      },
+      {
+        "command": "dataset.checkCloudConnection",
+        "title": "Dataset: Check Cloud Connection"
       },
       {
         "command": "dataset.startSession",
@@ -108,6 +115,15 @@
           "minimum": 1,
           "maximum": 10000,
           "description": "Warn when stopping a session with more than this many changed files"
+        },
+        "dataset.uploadMode": {
+          "type": "string",
+          "enum": [
+            "full",
+            "metadataOnly"
+          ],
+          "default": "full",
+          "description": "Cloud upload mode: full uploads full record content, metadataOnly uploads redacted metadata without tool/file contents"
         }
       }
     }

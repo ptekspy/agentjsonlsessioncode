@@ -2,17 +2,42 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { CloudApiClient, type CloudTask } from './lib/cloud-api';
-import { SessionManager } from './lib/session-manager';
+import { SessionManager, type BuiltSessionResult } from './lib/session-manager';
 import type { RunCmdArgs } from './lib/tooling';
 import { DatasetSidebarProvider } from './sidebar/dataset-sidebar';
+
+type CloudConnectionStatus =
+	| 'connected'
+	| 'url-missing'
+	| 'token-missing'
+	| 'unreachable';
+
+type RecentArtifact = {
+	type: 'session' | 'export';
+	path: string;
+	createdAt: string;
+	status?: 'draft' | 'ready';
+};
 
 export function activate(context: vscode.ExtensionContext) {
 	const sessionManager = new SessionManager();
 	let cachedTasks: CloudTask[] = [];
+	let cloudStatus: CloudConnectionStatus = 'url-missing';
+	let isCloudChecking = false;
+	let lastCloudCheckAt: string | undefined;
 	const getSidebarState = () => ({
 		taskId: context.workspaceState.get<string>('dataset.taskId') ?? 'default',
 		isSessionActive: sessionManager.hasActiveSession(),
 		lastRecordPath: context.globalState.get<string>('dataset.lastRecordPath'),
+		lastSessionStatus: context.globalState.get<'draft' | 'ready'>('dataset.lastSessionStatus'),
+		lastSessionSummary: context.globalState.get<{
+			filesChanged: number;
+			commandsRecorded: number;
+		}>('dataset.lastSessionSummary'),
+		cloudStatus,
+		isCloudChecking,
+		lastCloudCheckAt,
+		recentArtifacts: context.globalState.get<RecentArtifact[]>('dataset.recentArtifacts') ?? [],
 	});
 
 	const sidebarProvider = new DatasetSidebarProvider(context.extensionUri, getSidebarState);
@@ -21,6 +46,11 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	const refreshSidebar = () => sidebarProvider.refresh();
+
+	const refreshCloudStatus = async () => {
+		cloudStatus = await getCloudConnectionStatus(context);
+		refreshSidebar();
+	};
 
 	const loadCloudTasks = async (): Promise<CloudTask[]> => {
 		const api = await getCloudApiClient(context);
@@ -39,12 +69,18 @@ export function activate(context: vscode.ExtensionContext) {
 		try {
 			const api = await getCloudApiClient(context);
 			if (!api) {
+				await refreshCloudStatus();
 				return;
 			}
 			await api.health();
+			cloudStatus = 'connected';
+			lastCloudCheckAt = new Date().toISOString();
 			await loadCloudTasks();
 			refreshSidebar();
 		} catch (error) {
+			cloudStatus = 'unreachable';
+			lastCloudCheckAt = new Date().toISOString();
+			refreshSidebar();
 			vscode.window.showWarningMessage(`Dataset cloud unavailable: ${toErrorMessage(error)}`);
 		}
 	})();
@@ -149,8 +185,47 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			await context.secrets.store('dataset.apiToken', token);
+			await refreshCloudStatus();
 			vscode.window.showInformationMessage('Dataset API token saved in SecretStorage.');
 			refreshSidebar();
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.checkCloudConnection', async () => {
+			isCloudChecking = true;
+			refreshSidebar();
+			try {
+				const api = await getCloudApiClient(context);
+				if (!api) {
+					await refreshCloudStatus();
+					throw new Error('Set dataset.apiBaseUrl and Dataset API token first.');
+				}
+
+				await api.health();
+				cloudStatus = 'connected';
+				lastCloudCheckAt = new Date().toISOString();
+				await loadCloudTasks();
+				refreshSidebar();
+				vscode.window.showInformationMessage('Cloud connection is healthy and tasks were refreshed.');
+			} catch (error) {
+				cloudStatus = 'unreachable';
+				lastCloudCheckAt = new Date().toISOString();
+				refreshSidebar();
+				vscode.window.showErrorMessage(`Cloud check failed: ${toErrorMessage(error)}`);
+			} finally {
+				isCloudChecking = false;
+				refreshSidebar();
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.openRecentArtifact', async (artifactPath: string) => {
+			if (!artifactPath || typeof artifactPath !== 'string') {
+				return;
+			}
+			await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(artifactPath));
 		}),
 	);
 
@@ -218,6 +293,20 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('dataset.stopSessionUpload', async () => {
 			try {
 				const result = await sessionManager.stopAndBuildLocalRecord(context);
+				await addRecentArtifact(context, {
+					type: 'session',
+					path: result.outputPath,
+					createdAt: new Date().toISOString(),
+					status: result.payload.status,
+				});
+				await context.globalState.update('dataset.lastSessionStatus', result.payload.status);
+				await context.globalState.update('dataset.lastSessionSummary', {
+					filesChanged: result.payload.metrics.filesChanged,
+					commandsRecorded: result.payload.metrics.commandsRun.length,
+				});
+				const uploadMode = vscode.workspace
+					.getConfiguration('dataset')
+					.get<'full' | 'metadataOnly'>('uploadMode', 'full');
 				const warningThreshold = vscode.workspace
 					.getConfiguration('dataset')
 					.get<number>('maxChangedFilesWarning', 50);
@@ -228,33 +317,56 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 				const api = await getCloudApiClient(context);
 				if (api) {
-					const upload = await api.createSession(result.payload);
+					const uploadPayload = buildUploadPayload(result, uploadMode);
+					const upload = await api.createSession(uploadPayload);
+					cloudStatus = 'connected';
+					lastCloudCheckAt = new Date().toISOString();
+					refreshSidebar();
 					vscode.window.showInformationMessage(
-						`Session uploaded (${upload.sessionId}, ${result.payload.status}) and saved locally: ${result.outputPath}`,
+						`Session uploaded (${upload.sessionId}, ${uploadPayload.status}, mode=${uploadMode}) and saved locally: ${result.outputPath}`,
 					);
 				} else {
+					await refreshCloudStatus();
 					vscode.window.showInformationMessage(
 						`Session record saved (${result.payload.status}): ${result.outputPath}`,
 					);
 				}
 				refreshSidebar();
 			} catch (error) {
+				if (toErrorMessage(error).includes('API')) {
+					cloudStatus = 'unreachable';
+					lastCloudCheckAt = new Date().toISOString();
+					refreshSidebar();
+				}
 				vscode.window.showErrorMessage(toErrorMessage(error));
 			}
 		}),
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('dataset.exportTaskJsonl', async () => {
+		vscode.commands.registerCommand(
+			'dataset.exportTaskJsonl',
+			async (input?: { since?: string; limit?: number }) => {
 			try {
 				const taskId =
 					(context.workspaceState.get<string>('dataset.taskId') ?? '').trim() || 'default';
 				const api = await getCloudApiClient(context);
 				if (!api) {
+					await refreshCloudStatus();
 					throw new Error('Set dataset.apiBaseUrl and Dataset API token before exporting.');
 				}
 
-				const jsonl = await api.exportTaskJsonl({ taskId });
+				const since = (input?.since ?? '').trim();
+				const limit =
+					typeof input?.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
+						? Math.floor(input.limit)
+						: undefined;
+
+				const jsonl = await api.exportTaskJsonl({
+					taskId,
+					since: since || undefined,
+					limit,
+				});
 				const folder = vscode.workspace.workspaceFolders?.[0];
 				if (!folder) {
 					throw new Error('No workspace folder available for export output.');
@@ -267,13 +379,26 @@ export function activate(context: vscode.ExtensionContext) {
 					`${taskId}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`,
 				);
 				await fs.writeFile(outputPath, jsonl, 'utf8');
+				await addRecentArtifact(context, {
+					type: 'export',
+					path: outputPath,
+					createdAt: new Date().toISOString(),
+				});
 
 				await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(outputPath));
+				cloudStatus = 'connected';
+				lastCloudCheckAt = new Date().toISOString();
 				vscode.window.showInformationMessage(`Task export saved: ${outputPath}`);
 			} catch (error) {
+				if (toErrorMessage(error).includes('API')) {
+					cloudStatus = 'unreachable';
+					lastCloudCheckAt = new Date().toISOString();
+					refreshSidebar();
+				}
 				vscode.window.showErrorMessage(toErrorMessage(error));
 			}
-		}),
+			},
+		),
 	);
 
 	context.subscriptions.push(
@@ -283,6 +408,44 @@ export function activate(context: vscode.ExtensionContext) {
 			refreshSidebar();
 		}),
 	);
+}
+
+function buildUploadPayload(
+	result: BuiltSessionResult,
+	uploadMode: 'full' | 'metadataOnly',
+): BuiltSessionResult['payload'] {
+	if (uploadMode === 'full') {
+		return result.payload;
+	}
+
+	const baseMessages = result.payload.record.messages.filter(
+		(message) => message.role === 'system' || message.role === 'user',
+	);
+
+	const metadataRecord = {
+		messages: [
+			...baseMessages,
+			{
+				role: 'assistant' as const,
+				content: 'Metadata-only upload mode enabled; tool traces and file contents were omitted.',
+			},
+		],
+	};
+
+	return {
+		...result.payload,
+		repo: {
+			...result.payload.repo,
+			root: '[redacted-local-path]',
+			remote: undefined,
+		},
+		metrics: {
+			filesChanged: result.payload.metrics.filesChanged,
+			commandsRun: [],
+		},
+		status: 'draft',
+		record: metadataRecord,
+	};
 }
 
 export function deactivate() {}
@@ -373,4 +536,37 @@ async function getCloudApiClient(
 		baseUrl,
 		token,
 	});
+}
+
+async function getCloudConnectionStatus(
+	context: vscode.ExtensionContext,
+): Promise<CloudConnectionStatus> {
+	const config = vscode.workspace.getConfiguration('dataset');
+	const baseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
+	if (!baseUrl) {
+		return 'url-missing';
+	}
+
+	const token = await context.secrets.get('dataset.apiToken');
+	if (!token) {
+		return 'token-missing';
+	}
+
+	try {
+		const api = new CloudApiClient({ baseUrl, token });
+		await api.health();
+		return 'connected';
+	} catch {
+		return 'unreachable';
+	}
+}
+
+async function addRecentArtifact(
+	context: vscode.ExtensionContext,
+	artifact: RecentArtifact,
+): Promise<void> {
+	const current = context.globalState.get<RecentArtifact[]>('dataset.recentArtifacts') ?? [];
+	const deduped = current.filter((entry) => entry.path !== artifact.path);
+	const next = [artifact, ...deduped].slice(0, 5);
+	await context.globalState.update('dataset.recentArtifacts', next);
 }

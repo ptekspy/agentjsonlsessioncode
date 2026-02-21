@@ -1,7 +1,13 @@
 import Fastify from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { config } from './config.js';
-import { CreateSessionBody, CreateTaskBody, ExportQuery, validateTrainingRecord } from './contracts.js';
+import {
+	CreateSessionBody,
+	CreateTaskBody,
+	ExportQuery,
+	deriveSessionStatusFromRecord,
+	validateTrainingRecord,
+} from './contracts.js';
 import { prisma } from './db.js';
 import { redactSecrets, requireBearerToken } from './security.js';
 
@@ -76,6 +82,12 @@ app.post('/sessions', async (request, reply) => {
 	}
 
 	const redactedRecord = redactSecrets(body.data.record);
+	const derivedStatus = deriveSessionStatusFromRecord(body.data.record);
+	if (body.data.status && body.data.status !== derivedStatus) {
+		return reply.code(400).send({
+			error: `Provided status (${body.data.status}) does not match derived status (${derivedStatus})`,
+		});
+	}
 
 	try {
 		const created = await prisma.session.create({
@@ -86,7 +98,7 @@ app.post('/sessions', async (request, reply) => {
 				branch: body.data.repo.branch,
 				baseRef: body.data.baseRef,
 				createdAt: new Date(body.data.createdAt),
-				status: body.data.status ?? 'draft',
+				status: derivedStatus,
 				record: redactedRecord as Prisma.InputJsonValue,
 			},
 		});

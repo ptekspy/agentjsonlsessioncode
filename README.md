@@ -1,74 +1,58 @@
-# agentjsonlsessioncode README
+# Session Recorder Extension
 
-This is the README for your extension "agentjsonlsessioncode". After writing up a brief description, we recommend including the following sections.
+VS Code extension for recording clean coding sessions into tool-trace training records and uploading them to a cloud API backed by Postgres.
 
-## Features
+## What it does
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- Enforces clean git start (`git status --porcelain` must be empty)
+- Captures baseline commit/branch/remote
+- Builds records from git diff at stop time (`repo.readFile`, `apply_patch`)
+- Records strict allowlisted `run_cmd` traces for pnpm actions from sidebar controls
+- Uploads sessions to cloud API and supports task JSONL export (with filters)
+- Shows sidebar cloud status (connected / missing config / unreachable)
+- Tracks recent local artifacts (sessions + exports) for one-click reopen
 
-For example if there is an image subfolder under your extension project workspace:
+## Quick start
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Start backend in [server/README.md](server/README.md)
+2. In VS Code settings, set `dataset.apiBaseUrl`
+3. Run command: `Dataset: Set API Token`
+4. Open Dataset activity bar view and run:
+	- Select/Create Task
+	- (Optional) Check Cloud Connection
+	- Start Session
+	- Optionally run pnpm commands via `run_cmd` controls
+	- Stop Session (saves local artifact and uploads)
+	- Export task JSONL (optional `since` and `limit`)
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+Local session artifacts are written to `.agent-dataset/sessions`.
+Local export artifacts are written to `.agent-dataset/exports`.
 
-## Requirements
+## Sidebar features
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- **Cloud health** badge with last check timestamp and manual check button
+- **Task controls** for select/create/token setup
+- **run_cmd controls** for `pnpm i`, `add`, `add -D`, `remove`, `lint`, `test`, `build`
+- **Export controls** with optional `since` (ISO datetime) and `limit`
+- **Session quality** summary (`draft|ready`), changed files, recorded commands
+- **Recent history** list for the latest local session/export files
 
-## Extension Settings
+## Key settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+- `dataset.apiBaseUrl`
+- `dataset.ignoreGlobs`
+- `dataset.redactionPatterns`
+- `dataset.maxCommandOutputChars`
+- `dataset.maxChangedFilesWarning`
+- `dataset.uploadMode` (`full` or `metadataOnly`)
 
-For example:
+`metadataOnly` keeps full local records but uploads redacted metadata without tool/file contents.
 
-This extension contributes the following settings:
+## Quality and safety notes
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- `run_cmd` outputs are redacted and truncated before record persistence/upload.
+- Server validates tool-call/result linkage and strict `run_cmd` allowlist.
+- Server derives session status from record content and rejects mismatched client status.
 
 ## Dataset backend
 

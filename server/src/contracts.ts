@@ -219,6 +219,44 @@ export const ExportQuery = z.object({
 	since: z.string().datetime().optional(),
 });
 
+export function deriveSessionStatusFromRecord(record: z.infer<typeof TrainingRecord>): 'draft' | 'ready' {
+	let hasApplyPatch = false;
+	let hasValidationRunCmd = false;
+
+	for (const message of record.messages) {
+		if (message.role !== 'assistant' || !('tool_calls' in message)) {
+			continue;
+		}
+
+		for (const call of message.tool_calls) {
+			let parsedArgs: unknown;
+			try {
+				parsedArgs = JSON.parse(call.function.arguments);
+			} catch {
+				continue;
+			}
+
+			if (call.function.name === 'apply_patch') {
+				hasApplyPatch = true;
+			}
+
+			if (call.function.name === 'run_cmd') {
+				const parsed = RunCmdArgsSchema.safeParse(parsedArgs);
+				if (parsed.success) {
+					const hasValidationArg = parsed.data.args.some((arg) =>
+						arg === 'lint' || arg === 'test' || arg === 'build',
+					);
+					if (hasValidationArg) {
+						hasValidationRunCmd = true;
+					}
+				}
+			}
+		}
+	}
+
+	return hasApplyPatch && hasValidationRunCmd ? 'ready' : 'draft';
+}
+
 export function validateTrainingRecord(record: z.infer<typeof TrainingRecord>): void {
 	const seenCalls = new Map<
 		string,

@@ -27,12 +27,25 @@ pnpm prisma:migrate --name init
 pnpm dev
 ```
 
+6. Run server tests:
+
+```bash
+pnpm test
+```
+
 ## API
 
 - `GET /health`
 - `GET /tasks` (auth)
 - `POST /tasks` (auth)
 - `POST /sessions` (auth)
-- `GET /export.jsonl?taskId=...` (auth)
+- `GET /export.jsonl?taskId=...&since=...&limit=...` (auth)
 
 Auth uses `Authorization: Bearer <token>` and token values from `API_TOKENS` in `.env`.
+
+## Validation behavior
+
+- Enforces training record schema and tool-call/result linkage.
+- Validates `run_cmd` against strict pnpm allowlist.
+- Validates `apply_patch` operation invariants.
+- Derives `status` (`draft|ready`) from record content server-side and rejects mismatched client-provided status.

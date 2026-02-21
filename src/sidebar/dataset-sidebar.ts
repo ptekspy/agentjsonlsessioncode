@@ -4,6 +4,20 @@ export type SidebarState = {
 	taskId: string;
 	isSessionActive: boolean;
 	lastRecordPath?: string;
+	lastSessionStatus?: 'draft' | 'ready';
+	cloudStatus?: 'connected' | 'url-missing' | 'token-missing' | 'unreachable';
+	isCloudChecking?: boolean;
+	lastCloudCheckAt?: string;
+	lastSessionSummary?: {
+		filesChanged: number;
+		commandsRecorded: number;
+	};
+	recentArtifacts?: Array<{
+		type: 'session' | 'export';
+		path: string;
+		createdAt: string;
+		status?: 'draft' | 'ready';
+	}>;
 };
 
 type SidebarAction =
@@ -11,6 +25,7 @@ type SidebarAction =
 	| { type: 'selectTask' }
 	| { type: 'createTask' }
 	| { type: 'setApiToken' }
+	| { type: 'checkCloudConnection' }
 	| { type: 'startSession' }
 	| { type: 'stopSessionUpload' }
 	| {
@@ -22,7 +37,14 @@ type SidebarAction =
 				timeoutMs?: number;
 			};
 	  }
-	| { type: 'exportTaskJsonl' }
+	| {
+			type: 'exportTaskJsonl';
+			payload: {
+				since?: string;
+				limit?: number;
+			};
+	  }
+	| { type: 'openRecentArtifact'; payload: { path: string } }
 	| { type: 'discardSession' };
 
 export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
@@ -85,10 +107,12 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'selectTask':
 			case 'createTask':
 			case 'setApiToken':
+			case 'checkCloudConnection':
 			case 'startSession':
 			case 'stopSessionUpload':
 			case 'runPnpmCommand':
 			case 'exportTaskJsonl':
+			case 'openRecentArtifact':
 			case 'discardSession':
 				if (maybeType === 'runPnpmCommand') {
 					const payload = (raw as { payload?: unknown }).payload;
@@ -122,6 +146,34 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 						},
 					};
 				}
+				if (maybeType === 'exportTaskJsonl') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return { type: 'exportTaskJsonl', payload: {} };
+					}
+					const typed = payload as {
+						since?: unknown;
+						limit?: unknown;
+					};
+					return {
+						type: 'exportTaskJsonl',
+						payload: {
+							since: typeof typed.since === 'string' ? typed.since : undefined,
+							limit: typeof typed.limit === 'number' ? typed.limit : undefined,
+						},
+					};
+				}
+				if (maybeType === 'openRecentArtifact') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return undefined;
+					}
+					const path = (payload as { path?: unknown }).path;
+					if (typeof path !== 'string' || path.length === 0) {
+						return undefined;
+					}
+					return { type: 'openRecentArtifact', payload: { path } };
+				}
 				return { type: maybeType };
 			default:
 				return undefined;
@@ -140,13 +192,24 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 
-		const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand'>, string> = {
+		if (action.type === 'exportTaskJsonl') {
+			await vscode.commands.executeCommand('dataset.exportTaskJsonl', action.payload);
+			this.refresh();
+			return;
+		}
+
+		if (action.type === 'openRecentArtifact') {
+			await vscode.commands.executeCommand('dataset.openRecentArtifact', action.payload.path);
+			return;
+		}
+
+		const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'openRecentArtifact'>, string> = {
 			selectTask: 'dataset.selectTask',
 			createTask: 'dataset.createTask',
 			setApiToken: 'dataset.setApiToken',
+			checkCloudConnection: 'dataset.checkCloudConnection',
 			startSession: 'dataset.startSession',
 			stopSessionUpload: 'dataset.stopSessionUpload',
-			exportTaskJsonl: 'dataset.exportTaskJsonl',
 			discardSession: 'dataset.discardSession',
 		};
 
