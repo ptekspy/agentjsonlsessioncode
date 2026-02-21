@@ -3,6 +3,7 @@
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
   "version": "0.0.1",
+  "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
     "url": "https://github.com/ptekspy/agentjsonlsessioncode"
