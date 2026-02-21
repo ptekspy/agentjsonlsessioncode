@@ -572,8 +572,12 @@ export class SessionManager {
 }
 
 function globMatch(targetPath: string, globPattern: string): boolean {
-	const regex = new RegExp(`^${globToRegex(globPattern)}$`);
-	return regex.test(targetPath);
+	try {
+		const regex = new RegExp(`^${globToRegex(globPattern)}$`);
+		return regex.test(targetPath);
+	} catch {
+		return false;
+	}
 }
 
 function globToRegex(globPattern: string): string {
@@ -582,9 +586,26 @@ function globToRegex(globPattern: string): string {
 		pattern = `${pattern.replace(/\/+$/, '')}/**`;
 	}
 
-	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-	return escaped
-		.replace(/\\\*\\\*/g, '___DOUBLESTAR___')
-		.replace(/\\\*/g, '[^/]*')
-		.replace(/___DOUBLESTAR___/g, '.*');
+	let result = '';
+	for (let index = 0; index < pattern.length; index += 1) {
+		const char = pattern[index];
+		if (char === '*') {
+			const next = pattern[index + 1];
+			if (next === '*') {
+				result += '.*';
+				index += 1;
+			} else {
+				result += '[^/]*';
+			}
+			continue;
+		}
+
+		if ('\\^$+?.()|{}[]'.includes(char)) {
+			result += `\\${char}`;
+		} else {
+			result += char;
+		}
+	}
+
+	return result;
 }
