@@ -25,7 +25,7 @@ export const ApplyPatchOperation = z.discriminatedUnion('type', [
 	z.object({
 		type: z.literal('update_file'),
 		path: z.string().min(1),
-		diff: z.string().min(1),
+		diff: z.string().min(1).refine((s) => s.includes('@@'), 'update_file.diff must include @@ hunks'),
 	}),
 	z.object({
 		type: z.literal('delete_file'),

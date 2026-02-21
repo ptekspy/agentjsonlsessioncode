@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.5",
+  "version": "0.0.8",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -94,6 +94,11 @@
           "type": "string",
           "default": "",
           "description": "Base URL for dataset backend API"
+        },
+        "dataset.defaultSystemPrompt": {
+          "type": "string",
+          "default": "You are an expert TypeScript/Next.js coding assistant generating high-quality training traces. Be precise, minimal, and deterministic. Read before edit; search before multi-file changes. Keep patches focused, avoid unnecessary dependencies, and maintain current architecture. When ready to change files, call apply_patch. Do not paste code outside tool calls. Validate with lint/test/build when relevant. Surface errors clearly, avoid hidden side effects, and stop once the requested task is fully complete.",
+          "description": "Default system prompt shown when starting a dataset session"
         },
         "dataset.ignoreGlobs": {
           "type": "array",

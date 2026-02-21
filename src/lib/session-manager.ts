@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
@@ -93,6 +93,7 @@ export type BuiltSessionResult = {
 
 export class SessionManager {
 	private activeSession: ActiveSession | undefined;
+	private runCmdTerminal: RunCmdTerminal | undefined;
 
 	public hasActiveSession(): boolean {
 		return this.activeSession !== undefined;
@@ -152,35 +153,40 @@ export class SessionManager {
 		parseAllowedRunCmd(normalized);
 
 		const cwd = normalized.cwd ?? this.activeSession.repoRoot;
+		const recordedArgs: RunCmdArgs = {
+			...normalized,
+			cwd,
+		};
 		const timeoutMs = normalized.timeoutMs ?? 120_000;
 
-		let output = '';
-		let failed = false;
+		const { output: rawOutput, failed } = await this.runPnpmWithLiveTerminal(recordedArgs, cwd, timeoutMs);
+		const output = this.truncateOutput(this.redactOutput(rawOutput));
 
-		try {
-			const { stdout, stderr } = await execFileAsync('pnpm', normalized.args, {
-				cwd,
-				timeout: timeoutMs,
-				maxBuffer: 20 * 1024 * 1024,
-				encoding: 'utf8',
-				env: normalized.env ? { ...process.env, ...normalized.env } : process.env,
-			});
-
-			output = this.truncateOutput(this.redactOutput(this.combineCommandOutput(stdout, stderr)));
-		} catch (error) {
-			failed = true;
-			output = this.truncateOutput(this.redactOutput(this.parseCommandError(error)));
-		}
-
-		this.activeSession.runCmdEvents.push({ args: normalized, output });
+		this.activeSession.runCmdEvents.push({ args: recordedArgs, output });
 		this.activeSession.commandsRun.push(`pnpm ${normalized.args.join(' ')}`);
-		addRunCmd(this.activeSession.record, this.nextCallId(this.activeSession, 'run_cmd'), normalized, output);
+		addRunCmd(this.activeSession.record, this.nextCallId(this.activeSession, 'run_cmd'), recordedArgs, output);
 
 		if (failed) {
 			throw new Error(output || 'run_cmd failed');
 		}
 
 		return output;
+	}
+
+	private async runPnpmWithLiveTerminal(
+		args: RunCmdArgs,
+		cwd: string,
+		timeoutMs: number,
+	): Promise<{ output: string; failed: boolean }> {
+		const terminal = this.getOrCreateRunCmdTerminal();
+		return terminal.runCommand(args, cwd, timeoutMs);
+	}
+
+	private getOrCreateRunCmdTerminal(): RunCmdTerminal {
+		if (!this.runCmdTerminal || this.runCmdTerminal.isDisposed()) {
+			this.runCmdTerminal = new RunCmdTerminal('Dataset run_cmd');
+		}
+		return this.runCmdTerminal;
 	}
 
 	public async submitFileChangesCheckpoint(): Promise<{ filesChanged: number; operationsApplied: number }> {
@@ -410,15 +416,7 @@ export class SessionManager {
 		if (idx < 0) {
 			return '';
 		}
-
-		const body = fullDiff
-			.slice(idx)
-			.split('\n')
-			.filter((line) => !line.startsWith('@@'))
-			.join('\n')
-			.trim();
-
-		return body;
+		return fullDiff.slice(idx);
 	}
 
 	private async safeGitShow(repoRoot: string, baseRef: string, filePath: string): Promise<string> {
@@ -578,6 +576,124 @@ export class SessionManager {
 		}
 
 		return regexes;
+	}
+}
+
+class RunCmdTerminal implements vscode.Pseudoterminal {
+	private readonly writeEmitter = new vscode.EventEmitter<string>();
+	private readonly closeEmitter = new vscode.EventEmitter<number>();
+	private readonly terminal: vscode.Terminal;
+	private running = false;
+	private disposed = false;
+	private activeChild: ReturnType<typeof spawn> | undefined;
+
+	public readonly onDidWrite = this.writeEmitter.event;
+	public readonly onDidClose = this.closeEmitter.event;
+
+	public constructor(name: string) {
+		this.terminal = vscode.window.createTerminal({ name, pty: this });
+	}
+
+	public open(): void {}
+
+	public close(): void {
+		this.disposed = true;
+		if (this.activeChild && !this.activeChild.killed) {
+			this.activeChild.kill('SIGTERM');
+		}
+		this.writeEmitter.dispose();
+		this.closeEmitter.dispose();
+	}
+
+	public isDisposed(): boolean {
+		return this.disposed;
+	}
+
+	public async runCommand(
+		args: RunCmdArgs,
+		cwd: string,
+		timeoutMs: number,
+	): Promise<{ output: string; failed: boolean }> {
+		if (this.disposed) {
+			throw new Error('run_cmd terminal was closed. Run the command again to reopen it.');
+		}
+
+		if (this.running) {
+			throw new Error('A run_cmd command is already running. Wait for it to finish first.');
+		}
+
+		this.running = true;
+		this.terminal.show(true);
+
+		return await new Promise((resolve) => {
+			let collected = '';
+			let settled = false;
+			let timedOut = false;
+			let timeoutHandle: NodeJS.Timeout | undefined;
+
+			const normalizedNewlines = (value: string) => value.replace(/\r?\n/g, '\r\n');
+			const pushOutput = (value: string) => {
+				collected += value;
+				this.writeEmitter.fire(normalizedNewlines(value));
+			};
+
+			const settle = (failed: boolean, fallbackMessage?: string) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+				}
+				this.running = false;
+				this.activeChild = undefined;
+
+				const output = collected.length > 0 ? collected : (fallbackMessage ?? '[no output]');
+				resolve({ output, failed });
+			};
+
+			pushOutput(`$ pnpm ${args.args.join(' ')}\n`);
+
+			const child = spawn('pnpm', args.args, {
+				cwd,
+				env: args.env ? { ...process.env, ...args.env } : process.env,
+				shell: false,
+			});
+			this.activeChild = child;
+
+			child.stdout.on('data', (chunk: Buffer | string) => {
+				pushOutput(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+			});
+
+			child.stderr.on('data', (chunk: Buffer | string) => {
+				pushOutput(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+			});
+
+			child.on('error', (error) => {
+				pushOutput(`${error.message}\n`);
+				settle(true, error.message);
+			});
+
+			child.on('close', (code, signal) => {
+				if (timedOut) {
+					settle(true, 'run_cmd timed out');
+					return;
+				}
+
+				if (signal) {
+					settle(true, `run_cmd terminated by signal ${signal}`);
+					return;
+				}
+
+				settle((code ?? 0) !== 0, `[exit code ${code ?? 0}]`);
+			});
+
+			timeoutHandle = setTimeout(() => {
+				timedOut = true;
+				pushOutput(`\nrun_cmd timed out after ${timeoutMs}ms\n`);
+				child.kill('SIGTERM');
+			}, timeoutMs);
+		});
 	}
 }
 

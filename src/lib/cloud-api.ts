@@ -38,6 +38,10 @@ export class CloudApiClient {
 		return this.request<{ sessionId: string }>('POST', '/sessions', payload);
 	}
 
+	public async deleteSession(sessionId: string): Promise<void> {
+		await this.request<void>('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
+	}
+
 	public async exportTaskJsonl(params: {
 		taskId: string;
 		since?: string;

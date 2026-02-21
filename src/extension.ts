@@ -17,7 +17,11 @@ type RecentArtifact = {
 	path: string;
 	createdAt: string;
 	status?: 'draft' | 'ready';
+	cloudSessionId?: string;
 };
+
+const DEFAULT_SYSTEM_PROMPT =
+	'You are an expert TypeScript/Next.js coding assistant generating high-quality training traces. Be precise, minimal, and deterministic. Read before edit; search before multi-file changes. Keep patches focused, avoid unnecessary dependencies, and maintain current architecture. When ready to change files, call apply_patch. Do not paste code outside tool calls. Validate with lint/test/build when relevant. Surface errors clearly, avoid hidden side effects, and stop once the requested task is fully complete.';
 
 export function activate(context: vscode.ExtensionContext) {
 	const sessionManager = new SessionManager();
@@ -276,6 +280,16 @@ export function activate(context: vscode.ExtensionContext) {
 					return;
 				}
 
+				if (artifact?.cloudSessionId) {
+					const api = await getCloudApiClient(context);
+					if (!api) {
+						throw new Error(
+							'This session is cloud-backed. Configure dataset.apiBaseUrl and API token to delete from DB.',
+						);
+					}
+					await api.deleteSession(artifact.cloudSessionId);
+				}
+
 				await fs.rm(artifactPath, { force: true });
 				const nextArtifacts = recentArtifacts.filter((entry) => entry.path !== artifactPath);
 				await context.globalState.update('dataset.recentArtifacts', nextArtifacts);
@@ -292,11 +306,15 @@ export function activate(context: vscode.ExtensionContext) {
 			try {
 				const taskId =
 					(context.workspaceState.get<string>('dataset.taskId') ?? '').trim() || 'default';
+				const configuredSystemPrompt = vscode.workspace
+					.getConfiguration('dataset')
+					.get<string>('defaultSystemPrompt', DEFAULT_SYSTEM_PROMPT)
+					.trim();
 
 				const systemPrompt =
 					(await vscode.window.showInputBox({
 						prompt: 'System prompt for this session',
-						value: 'You are an expert coding assistant.',
+						value: configuredSystemPrompt || DEFAULT_SYSTEM_PROMPT,
 						ignoreFocusOut: true,
 					})) ?? '';
 
@@ -391,6 +409,13 @@ export function activate(context: vscode.ExtensionContext) {
 				if (api) {
 					const uploadPayload = buildUploadPayload(result, uploadMode);
 					const upload = await api.createSession(uploadPayload);
+					await addRecentArtifact(context, {
+						type: 'session',
+						path: result.outputPath,
+						createdAt: new Date().toISOString(),
+						status: result.payload.status,
+						cloudSessionId: upload.sessionId,
+					});
 					cloudStatus = 'connected';
 					lastCloudCheckAt = new Date().toISOString();
 					refreshSidebar();

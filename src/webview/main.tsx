@@ -18,6 +18,7 @@ type SidebarState = {
 		path: string;
 		createdAt: string;
 		status?: 'draft' | 'ready';
+		cloudSessionId?: string;
 	}>;
 };
 

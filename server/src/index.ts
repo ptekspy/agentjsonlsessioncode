@@ -109,6 +109,30 @@ app.post('/sessions', async (request, reply) => {
 	}
 });
 
+app.delete('/sessions/:sessionId', async (request, reply) => {
+	const params = request.params as { sessionId?: unknown };
+	const sessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+	if (!sessionId) {
+		return reply.code(400).send({ error: 'sessionId is required' });
+	}
+
+	try {
+		await prisma.session.delete({ where: { id: sessionId } });
+		return reply.code(204).send();
+	} catch (error) {
+		if (
+			typeof error === 'object' &&
+			error !== null &&
+			'code' in error &&
+			(error as { code?: string }).code === 'P2025'
+		) {
+			return reply.code(404).send({ error: 'session not found' });
+		}
+
+		return reply.code(500).send({ error: toErrorMessage(error) });
+	}
+});
+
 app.get('/export.jsonl', async (request, reply) => {
 	const parsed = ExportQuery.safeParse(request.query);
 	if (!parsed.success) {
