@@ -38,10 +38,38 @@ export class CloudApiClient {
 		return this.request<{ sessionId: string }>('POST', '/sessions', payload);
 	}
 
-	private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	public async exportTaskJsonl(params: {
+		taskId: string;
+		since?: string;
+		limit?: number;
+	}): Promise<string> {
+		const query = new URLSearchParams({ taskId: params.taskId });
+		if (params.since) {
+			query.set('since', params.since);
+		}
+		if (params.limit !== undefined) {
+			query.set('limit', String(params.limit));
+		}
+
+		return this.request<string>('GET', `/export.jsonl?${query.toString()}`, undefined, {
+			accept: 'application/x-ndjson,application/json,text/plain',
+			responseType: 'text',
+		});
+	}
+
+	private async request<T>(
+		method: string,
+		path: string,
+		body?: unknown,
+		extra?: { accept?: string; responseType?: 'json' | 'text' },
+	): Promise<T> {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
 		};
+
+		if (extra?.accept) {
+			headers.Accept = extra.accept;
+		}
 
 		if (this.token) {
 			headers.Authorization = `Bearer ${this.token}`;
@@ -60,6 +88,10 @@ export class CloudApiClient {
 
 		if (response.status === 204) {
 			return undefined as T;
+		}
+
+		if (extra?.responseType === 'text') {
+			return (await response.text()) as T;
 		}
 
 		const text = await response.text();

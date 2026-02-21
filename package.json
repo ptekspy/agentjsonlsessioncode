@@ -51,6 +51,10 @@
         "title": "Dataset: Stop Session (Upload)"
       },
       {
+        "command": "dataset.exportTaskJsonl",
+        "title": "Dataset: Export Task JSONL"
+      },
+      {
         "command": "dataset.discardSession",
         "title": "Dataset: Discard Session"
       }
@@ -62,6 +66,48 @@
           "type": "string",
           "default": "",
           "description": "Base URL for dataset backend API"
+        },
+        "dataset.ignoreGlobs": {
+          "type": "array",
+          "default": [
+            ".agent-dataset/**",
+            "node_modules/**",
+            ".next/**",
+            "dist/**",
+            "build/**",
+            "out/**"
+          ],
+          "description": "Workspace-relative glob patterns ignored when building session file diffs",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataset.redactionPatterns": {
+          "type": "array",
+          "default": [
+            "(?:ghp|github_pat)_[A-Za-z0-9_]{20,}",
+            "(?:sk|pk)_[A-Za-z0-9]{16,}",
+            "[A-Za-z0-9_\\-]{24,}\\.[A-Za-z0-9_\\-]{20,}\\.[A-Za-z0-9_\\-]{20,}",
+            "(api[-_ ]?key|token|secret)\\s*[:=]\\s*[^\\s\"']+"
+          ],
+          "description": "Regex patterns applied to command output redaction before saving/uploading records",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataset.maxCommandOutputChars": {
+          "type": "number",
+          "default": 50000,
+          "minimum": 1024,
+          "maximum": 1000000,
+          "description": "Maximum characters retained per recorded run_cmd output"
+        },
+        "dataset.maxChangedFilesWarning": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Warn when stopping a session with more than this many changed files"
         }
       }
     }

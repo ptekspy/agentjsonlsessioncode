@@ -4,19 +4,41 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
-import { addApplyPatch, makeSystem, makeToolCallMessage, makeToolResultMessage, makeUser } from './record-builders';
-import type { ApplyPatchOperation, TrainingRecord } from './tooling';
+import {
+	addApplyPatch,
+	addRunCmd,
+	makeSystem,
+	makeToolCallMessage,
+	makeToolResultMessage,
+	makeUser,
+} from './record-builders';
+import {
+	normalizeRunCmdArgs,
+	parseAllowedRunCmd,
+	type ApplyPatchOperation,
+	type RunCmdArgs,
+	type TrainingRecord,
+} from './tooling';
 
 const execFileAsync = promisify(execFile);
 
-const IGNORE_PREFIXES = [
-	'.agent-dataset/',
-	'node_modules/',
-	'.next/',
-	'dist/',
-	'build/',
-	'out/',
+const DEFAULT_IGNORE_GLOBS = [
+	'.agent-dataset/**',
+	'node_modules/**',
+	'.next/**',
+	'dist/**',
+	'build/**',
+	'out/**',
 ];
+
+const DEFAULT_REDACTION_PATTERNS = [
+	'(?:ghp|github_pat)_[A-Za-z0-9_]{20,}',
+	'(?:sk|pk)_[A-Za-z0-9]{16,}',
+	'[A-Za-z0-9_\\-]{24,}\\.[A-Za-z0-9_\\-]{20,}\\.[A-Za-z0-9_\\-]{20,}',
+	"(api[-_ ]?key|token|secret)\\s*[:=]\\s*[^\\s\"']+",
+];
+
+const DEFAULT_MAX_COMMAND_OUTPUT_CHARS = 50_000;
 
 type ActiveSession = {
 	taskId: string;
@@ -28,7 +50,13 @@ type ActiveSession = {
 	branch: string;
 	remote?: string;
 	commandsRun: string[];
+	runCmdEvents: RunCmdEvent[];
 	startedAt: string;
+};
+
+type RunCmdEvent = {
+	args: RunCmdArgs;
+	output: string;
 };
 
 type NameStatusChange =
@@ -54,6 +82,7 @@ export type BuiltSessionResult = {
 			filesChanged: number;
 			commandsRun: string[];
 		};
+		status: 'draft' | 'ready';
 		record: TrainingRecord;
 	};
 };
@@ -95,12 +124,52 @@ export class SessionManager {
 			branch,
 			remote,
 			commandsRun: [],
+			runCmdEvents: [],
 			startedAt: new Date().toISOString(),
 		};
 	}
 
 	public discardSession(): void {
 		this.activeSession = undefined;
+	}
+
+	public async runAllowedPnpmCommand(input: RunCmdArgs): Promise<string> {
+		if (!this.activeSession) {
+			throw new Error('Start a session before running recorded commands.');
+		}
+
+		const normalized = normalizeRunCmdArgs(input);
+		parseAllowedRunCmd(normalized);
+
+		const cwd = normalized.cwd ?? this.activeSession.repoRoot;
+		const timeoutMs = normalized.timeoutMs ?? 120_000;
+
+		let output = '';
+		let failed = false;
+
+		try {
+			const { stdout, stderr } = await execFileAsync('pnpm', normalized.args, {
+				cwd,
+				timeout: timeoutMs,
+				maxBuffer: 20 * 1024 * 1024,
+				encoding: 'utf8',
+				env: normalized.env ? { ...process.env, ...normalized.env } : process.env,
+			});
+
+			output = this.truncateOutput(this.redactOutput(this.combineCommandOutput(stdout, stderr)));
+		} catch (error) {
+			failed = true;
+			output = this.truncateOutput(this.redactOutput(this.parseCommandError(error)));
+		}
+
+		this.activeSession.runCmdEvents.push({ args: normalized, output });
+		this.activeSession.commandsRun.push(`pnpm ${normalized.args.join(' ')}`);
+
+		if (failed) {
+			throw new Error(output || 'run_cmd failed');
+		}
+
+		return output;
 	}
 
 	public async stopAndBuildLocalRecord(context: ExtensionContext): Promise<BuiltSessionResult> {
@@ -119,6 +188,11 @@ export class SessionManager {
 		let callSeq = 0;
 		const nextCallId = (prefix: string) => `${prefix}_${++callSeq}`;
 
+		for (const runCmdEvent of session.runCmdEvents) {
+			const callId = nextCallId('run_cmd');
+			addRunCmd(record, callId, runCmdEvent.args, runCmdEvent.output);
+		}
+
 		for (const change of filtered) {
 			if (change.kind === 'M' || change.kind === 'D') {
 				const callId = nextCallId('read');
@@ -136,12 +210,18 @@ export class SessionManager {
 		}
 
 		const operations = await this.buildApplyPatchOperations(session.repoRoot, session.baseRef, filtered);
+		const hasApplyPatch = operations.length > 0;
 		if (operations.length > 0) {
 			const applyPatchCallId = nextCallId('apply_patch');
 			addApplyPatch(record, applyPatchCallId, {
 				data: { action: { operations } },
 			});
 		}
+
+		const ranValidationCommand = session.commandsRun.some((command) =>
+			/(^|\s)(lint|test|build)(\s|$)/.test(command),
+		);
+		const status: 'draft' | 'ready' = hasApplyPatch && ranValidationCommand ? 'ready' : 'draft';
 
 		const payload = {
 			taskId: session.taskId,
@@ -158,6 +238,7 @@ export class SessionManager {
 				filesChanged: filtered.length,
 				commandsRun: session.commandsRun,
 			},
+			status,
 			record,
 		};
 
@@ -221,7 +302,9 @@ export class SessionManager {
 	}
 
 	private isIncludedPath(filePath: string): boolean {
-		return !IGNORE_PREFIXES.some((prefix) => filePath.startsWith(prefix));
+		const normalizedPath = filePath.replace(/\\/g, '/');
+		const patterns = this.getIgnoreGlobs();
+		return !patterns.some((pattern) => globMatch(normalizedPath, pattern));
 	}
 
 	private async buildApplyPatchOperations(
@@ -342,4 +425,111 @@ export class SessionManager {
 		const line = await this.git(repoRoot, args);
 		return line.replace(/\r?\n$/, '');
 	}
+
+	private combineCommandOutput(stdout: string, stderr: string): string {
+		const output = [stdout, stderr].filter((value) => value.length > 0).join('\n');
+		return output.length > 0 ? output : '[no output]';
+	}
+
+	private parseCommandError(error: unknown): string {
+		if (error && typeof error === 'object') {
+			const candidate = error as {
+				stdout?: string;
+				stderr?: string;
+				code?: string | number;
+				signal?: string;
+				message?: string;
+			};
+
+			const combined = this.combineCommandOutput(candidate.stdout ?? '', candidate.stderr ?? '');
+			if (combined !== '[no output]') {
+				return combined;
+			}
+
+			const code = candidate.code !== undefined ? `code=${String(candidate.code)}` : '';
+			const signal = candidate.signal ? `signal=${candidate.signal}` : '';
+			const suffix = [code, signal].filter(Boolean).join(' ');
+			if (candidate.message) {
+				return suffix ? `${candidate.message} (${suffix})` : candidate.message;
+			}
+		}
+
+		if (error instanceof Error) {
+			return error.message;
+		}
+
+		return 'run_cmd failed';
+	}
+
+	private truncateOutput(output: string): string {
+		const maxChars = this.getMaxCommandOutputChars();
+		if (output.length <= maxChars) {
+			return output;
+		}
+
+		return `${output.slice(0, maxChars)}\n(truncated)`;
+	}
+
+	private getIgnoreGlobs(): string[] {
+		const configured = vscode.workspace
+			.getConfiguration('dataset')
+			.get<string[]>('ignoreGlobs', DEFAULT_IGNORE_GLOBS);
+		const values = configured.map((entry) => entry.trim()).filter(Boolean);
+		return values.length > 0 ? values : DEFAULT_IGNORE_GLOBS;
+	}
+
+	private getMaxCommandOutputChars(): number {
+		const configured = vscode.workspace
+			.getConfiguration('dataset')
+			.get<number>('maxCommandOutputChars', DEFAULT_MAX_COMMAND_OUTPUT_CHARS);
+		if (!Number.isFinite(configured)) {
+			return DEFAULT_MAX_COMMAND_OUTPUT_CHARS;
+		}
+		return Math.max(1024, Math.floor(configured));
+	}
+
+	private redactOutput(output: string): string {
+		let redacted = output;
+		for (const regex of this.getRedactionRegexes()) {
+			redacted = redacted.replace(regex, '[REDACTED]');
+		}
+		return redacted;
+	}
+
+	private getRedactionRegexes(): RegExp[] {
+		const configured = vscode.workspace
+			.getConfiguration('dataset')
+			.get<string[]>('redactionPatterns', DEFAULT_REDACTION_PATTERNS);
+
+		const patterns = configured.length > 0 ? configured : DEFAULT_REDACTION_PATTERNS;
+		const regexes: RegExp[] = [];
+
+		for (const pattern of patterns) {
+			try {
+				regexes.push(new RegExp(pattern, 'g'));
+			} catch {
+				continue;
+			}
+		}
+
+		return regexes;
+	}
+}
+
+function globMatch(targetPath: string, globPattern: string): boolean {
+	const regex = new RegExp(`^${globToRegex(globPattern)}$`);
+	return regex.test(targetPath);
+}
+
+function globToRegex(globPattern: string): string {
+	let pattern = globPattern.replace(/\\/g, '/');
+	if (!pattern.includes('*')) {
+		pattern = `${pattern.replace(/\/+$/, '')}/**`;
+	}
+
+	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+	return escaped
+		.replace(/\\\*\\\*/g, '___DOUBLESTAR___')
+		.replace(/\\\*/g, '[^/]*')
+		.replace(/___DOUBLESTAR___/g, '.*');
 }

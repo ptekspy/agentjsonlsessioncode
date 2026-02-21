@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id          String    @id
+  name        String
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  sessions    Session[]
+
+  @@map("tasks")
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  taskId     String   @map("task_id")
+  repoName   String   @map("repo_name")
+  repoRemote String?  @map("repo_remote")
+  branch     String?
+  baseRef    String   @map("base_ref")
+  createdAt  DateTime @default(now()) @map("created_at")
+  status     String   @default("draft")
+  record     Json
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt], map: "sessions_task_id_created_at_idx")
+  @@map("sessions")
+}

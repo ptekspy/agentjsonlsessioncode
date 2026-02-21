@@ -21729,6 +21729,9 @@
       taskId: "default",
       isSessionActive: false
     });
+    const [filter, setFilter] = (0, import_react.useState)("");
+    const [packages, setPackages] = (0, import_react.useState)("");
+    const [timeoutSec, setTimeoutSec] = (0, import_react.useState)("120");
     (0, import_react.useEffect)(() => {
       const listener = (event) => {
         const message = event.data;
@@ -21744,6 +21747,18 @@
       () => state.isSessionActive ? "Active session" : "No active session",
       [state.isSessionActive]
     );
+    const runPreset = (preset) => {
+      const timeoutValue = Number(timeoutSec);
+      vscode.postMessage({
+        type: "runPnpmCommand",
+        payload: {
+          preset,
+          filter: filter.trim() || void 0,
+          packages: packages.trim() || void 0,
+          timeoutMs: Number.isFinite(timeoutValue) && timeoutValue > 0 ? timeoutValue * 1e3 : void 0
+        }
+      });
+    };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("main", { style: styles.container, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { style: styles.title, children: "Session Recorder" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
@@ -21764,6 +21779,46 @@
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiToken" }), children: "Set API Token" })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "run_cmd" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
+            placeholder: "--filter selector (optional)",
+            value: filter,
+            onChange: (event) => setFilter(event.target.value),
+            disabled: !state.isSessionActive
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
+            placeholder: "packages for add/remove (space separated)",
+            value: packages,
+            onChange: (event) => setPackages(event.target.value),
+            disabled: !state.isSessionActive
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
+            placeholder: "timeout seconds",
+            value: timeoutSec,
+            onChange: (event) => setTimeoutSec(event.target.value),
+            disabled: !state.isSessionActive
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("install"), disabled: !state.isSessionActive, children: "pnpm i" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("add"), disabled: !state.isSessionActive, children: "pnpm add" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("addDev"), disabled: !state.isSessionActive, children: "pnpm add -D" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("remove"), disabled: !state.isSessionActive, children: "pnpm remove" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("lint"), disabled: !state.isSessionActive, children: "pnpm lint" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("test"), disabled: !state.isSessionActive, children: "pnpm test" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => runPreset("build"), disabled: !state.isSessionActive, children: "pnpm build" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",
           {
@@ -21780,6 +21835,14 @@
             onClick: () => vscode.postMessage({ type: "stopSessionUpload" }),
             disabled: !state.isSessionActive,
             children: "Stop Session"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            style: styles.button,
+            onClick: () => vscode.postMessage({ type: "exportTaskJsonl" }),
+            children: "Export Task JSONL"
           }
         ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -21822,6 +21885,18 @@
       flexDirection: "column",
       gap: 6,
       marginTop: 6
+    },
+    sectionTitle: {
+      fontSize: "0.85rem",
+      fontWeight: 600,
+      margin: "2px 0",
+      opacity: 0.9
+    },
+    input: {
+      padding: "6px 8px",
+      background: "var(--vscode-input-background)",
+      border: "1px solid var(--vscode-input-border)",
+      color: "var(--vscode-input-foreground)"
     },
     button: {
       padding: "6px 8px",

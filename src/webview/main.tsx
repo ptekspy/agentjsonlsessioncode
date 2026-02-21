@@ -20,6 +20,16 @@ type WebviewToExtension =
 	| { type: 'setApiToken' }
 	| { type: 'startSession' }
 	| { type: 'stopSessionUpload' }
+	| {
+			type: 'runPnpmCommand';
+			payload: {
+				preset: 'install' | 'add' | 'addDev' | 'remove' | 'lint' | 'test' | 'build';
+				filter?: string;
+				packages?: string;
+				timeoutMs?: number;
+			};
+	  }
+	| { type: 'exportTaskJsonl' }
 	| { type: 'discardSession' };
 
 declare function acquireVsCodeApi(): {
@@ -33,6 +43,9 @@ function App() {
 		taskId: 'default',
 		isSessionActive: false,
 	});
+	const [filter, setFilter] = useState('');
+	const [packages, setPackages] = useState('');
+	const [timeoutSec, setTimeoutSec] = useState('120');
 
 	useEffect(() => {
 		const listener = (event: MessageEvent) => {
@@ -52,6 +65,21 @@ function App() {
 		() => (state.isSessionActive ? 'Active session' : 'No active session'),
 		[state.isSessionActive],
 	);
+
+	const runPreset = (
+		preset: 'install' | 'add' | 'addDev' | 'remove' | 'lint' | 'test' | 'build',
+	) => {
+		const timeoutValue = Number(timeoutSec);
+		vscode.postMessage({
+			type: 'runPnpmCommand',
+			payload: {
+				preset,
+				filter: filter.trim() || undefined,
+				packages: packages.trim() || undefined,
+				timeoutMs: Number.isFinite(timeoutValue) && timeoutValue > 0 ? timeoutValue * 1000 : undefined,
+			},
+		});
+	};
 
 	return (
 		<main style={styles.container}>
@@ -73,6 +101,52 @@ function App() {
 			</div>
 
 			<div style={styles.section}>
+				<h3 style={styles.sectionTitle}>run_cmd</h3>
+				<input
+					style={styles.input}
+					placeholder="--filter selector (optional)"
+					value={filter}
+					onChange={(event) => setFilter(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<input
+					style={styles.input}
+					placeholder="packages for add/remove (space separated)"
+					value={packages}
+					onChange={(event) => setPackages(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<input
+					style={styles.input}
+					placeholder="timeout seconds"
+					value={timeoutSec}
+					onChange={(event) => setTimeoutSec(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<button style={styles.button} onClick={() => runPreset('install')} disabled={!state.isSessionActive}>
+					pnpm i
+				</button>
+				<button style={styles.button} onClick={() => runPreset('add')} disabled={!state.isSessionActive}>
+					pnpm add
+				</button>
+				<button style={styles.button} onClick={() => runPreset('addDev')} disabled={!state.isSessionActive}>
+					pnpm add -D
+				</button>
+				<button style={styles.button} onClick={() => runPreset('remove')} disabled={!state.isSessionActive}>
+					pnpm remove
+				</button>
+				<button style={styles.button} onClick={() => runPreset('lint')} disabled={!state.isSessionActive}>
+					pnpm lint
+				</button>
+				<button style={styles.button} onClick={() => runPreset('test')} disabled={!state.isSessionActive}>
+					pnpm test
+				</button>
+				<button style={styles.button} onClick={() => runPreset('build')} disabled={!state.isSessionActive}>
+					pnpm build
+				</button>
+			</div>
+
+			<div style={styles.section}>
 				<button
 					style={styles.button}
 					onClick={() => vscode.postMessage({ type: 'startSession' })}
@@ -86,6 +160,12 @@ function App() {
 					disabled={!state.isSessionActive}
 				>
 					Stop Session
+				</button>
+				<button
+					style={styles.button}
+					onClick={() => vscode.postMessage({ type: 'exportTaskJsonl' })}
+				>
+					Export Task JSONL
 				</button>
 				<button
 					style={styles.button}
@@ -127,6 +207,18 @@ const styles: Record<string, React.CSSProperties> = {
 		flexDirection: 'column',
 		gap: 6,
 		marginTop: 6,
+	},
+	sectionTitle: {
+		fontSize: '0.85rem',
+		fontWeight: 600,
+		margin: '2px 0',
+		opacity: 0.9,
+	},
+	input: {
+		padding: '6px 8px',
+		background: 'var(--vscode-input-background)',
+		border: '1px solid var(--vscode-input-border)',
+		color: 'var(--vscode-input-foreground)',
 	},
 	button: {
 		padding: '6px 8px',

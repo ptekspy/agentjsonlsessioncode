@@ -13,6 +13,16 @@ type SidebarAction =
 	| { type: 'setApiToken' }
 	| { type: 'startSession' }
 	| { type: 'stopSessionUpload' }
+	| {
+			type: 'runPnpmCommand';
+			payload: {
+				preset: 'install' | 'add' | 'addDev' | 'remove' | 'lint' | 'test' | 'build';
+				filter?: string;
+				packages?: string;
+				timeoutMs?: number;
+			};
+	  }
+	| { type: 'exportTaskJsonl' }
 	| { type: 'discardSession' };
 
 export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
@@ -77,7 +87,41 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'setApiToken':
 			case 'startSession':
 			case 'stopSessionUpload':
+			case 'runPnpmCommand':
+			case 'exportTaskJsonl':
 			case 'discardSession':
+				if (maybeType === 'runPnpmCommand') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return undefined;
+					}
+					const typed = payload as {
+						preset?: unknown;
+						filter?: unknown;
+						packages?: unknown;
+						timeoutMs?: unknown;
+					};
+					if (
+						typed.preset !== 'install' &&
+						typed.preset !== 'add' &&
+						typed.preset !== 'addDev' &&
+						typed.preset !== 'remove' &&
+						typed.preset !== 'lint' &&
+						typed.preset !== 'test' &&
+						typed.preset !== 'build'
+					) {
+						return undefined;
+					}
+					return {
+						type: 'runPnpmCommand',
+						payload: {
+							preset: typed.preset,
+							filter: typeof typed.filter === 'string' ? typed.filter : undefined,
+							packages: typeof typed.packages === 'string' ? typed.packages : undefined,
+							timeoutMs: typeof typed.timeoutMs === 'number' ? typed.timeoutMs : undefined,
+						},
+					};
+				}
 				return { type: maybeType };
 			default:
 				return undefined;
@@ -90,12 +134,19 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 
-		const commandByAction: Record<Exclude<SidebarAction['type'], 'ready'>, string> = {
+		if (action.type === 'runPnpmCommand') {
+			await vscode.commands.executeCommand('dataset.runPnpmCommand', action.payload);
+			this.refresh();
+			return;
+		}
+
+		const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand'>, string> = {
 			selectTask: 'dataset.selectTask',
 			createTask: 'dataset.createTask',
 			setApiToken: 'dataset.setApiToken',
 			startSession: 'dataset.startSession',
 			stopSessionUpload: 'dataset.stopSessionUpload',
+			exportTaskJsonl: 'dataset.exportTaskJsonl',
 			discardSession: 'dataset.discardSession',
 		};
 

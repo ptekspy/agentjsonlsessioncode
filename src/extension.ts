@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { CloudApiClient, type CloudTask } from './lib/cloud-api';
 import { SessionManager } from './lib/session-manager';
+import type { RunCmdArgs } from './lib/tooling';
 import { DatasetSidebarProvider } from './sidebar/dataset-sidebar';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -189,19 +192,84 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			'dataset.runPnpmCommand',
+			async (input: {
+				preset: 'install' | 'add' | 'addDev' | 'remove' | 'lint' | 'test' | 'build';
+				filter?: string;
+				packages?: string;
+				timeoutMs?: number;
+			}) => {
+				try {
+					const runArgs = buildRunCmdArgs(input);
+					const output = await sessionManager.runAllowedPnpmCommand(runArgs);
+					vscode.window.showInformationMessage(
+						`Recorded command: pnpm ${runArgs.args.join(' ')} (${summarizeOutput(output)})`,
+					);
+					refreshSidebar();
+				} catch (error) {
+					vscode.window.showErrorMessage(toErrorMessage(error));
+				}
+			},
+		),
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('dataset.stopSessionUpload', async () => {
 			try {
 				const result = await sessionManager.stopAndBuildLocalRecord(context);
+				const warningThreshold = vscode.workspace
+					.getConfiguration('dataset')
+					.get<number>('maxChangedFilesWarning', 50);
+				if (result.payload.metrics.filesChanged > warningThreshold) {
+					vscode.window.showWarningMessage(
+						`Large session detected (${result.payload.metrics.filesChanged} changed files). Consider smaller sessions for cleaner training data.`,
+					);
+				}
 				const api = await getCloudApiClient(context);
 				if (api) {
 					const upload = await api.createSession(result.payload);
 					vscode.window.showInformationMessage(
-						`Session uploaded (${upload.sessionId}) and saved locally: ${result.outputPath}`,
+						`Session uploaded (${upload.sessionId}, ${result.payload.status}) and saved locally: ${result.outputPath}`,
 					);
 				} else {
-					vscode.window.showInformationMessage(`Session record saved: ${result.outputPath}`);
+					vscode.window.showInformationMessage(
+						`Session record saved (${result.payload.status}): ${result.outputPath}`,
+					);
 				}
 				refreshSidebar();
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.exportTaskJsonl', async () => {
+			try {
+				const taskId =
+					(context.workspaceState.get<string>('dataset.taskId') ?? '').trim() || 'default';
+				const api = await getCloudApiClient(context);
+				if (!api) {
+					throw new Error('Set dataset.apiBaseUrl and Dataset API token before exporting.');
+				}
+
+				const jsonl = await api.exportTaskJsonl({ taskId });
+				const folder = vscode.workspace.workspaceFolders?.[0];
+				if (!folder) {
+					throw new Error('No workspace folder available for export output.');
+				}
+
+				const exportDir = path.join(folder.uri.fsPath, '.agent-dataset', 'exports');
+				await fs.mkdir(exportDir, { recursive: true });
+				const outputPath = path.join(
+					exportDir,
+					`${taskId}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`,
+				);
+				await fs.writeFile(outputPath, jsonl, 'utf8');
+
+				await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(outputPath));
+				vscode.window.showInformationMessage(`Task export saved: ${outputPath}`);
 			} catch (error) {
 				vscode.window.showErrorMessage(toErrorMessage(error));
 			}
@@ -224,6 +292,67 @@ function toErrorMessage(error: unknown): string {
 		return error.message;
 	}
 	return 'Unknown error';
+}
+
+function buildRunCmdArgs(input: {
+	preset: 'install' | 'add' | 'addDev' | 'remove' | 'lint' | 'test' | 'build';
+	filter?: string;
+	packages?: string;
+	timeoutMs?: number;
+}): RunCmdArgs {
+	const args: string[] = [];
+	const filter = (input.filter ?? '').trim();
+	if (filter) {
+		args.push('--filter', filter);
+	}
+
+	const packages = (input.packages ?? '')
+		.split(/\s+/)
+		.map((pkg) => pkg.trim())
+		.filter(Boolean);
+
+	switch (input.preset) {
+		case 'install':
+			args.push('i');
+			break;
+		case 'add':
+			if (packages.length === 0) {
+				throw new Error('Provide at least one package for pnpm add.');
+			}
+			args.push('add', ...packages);
+			break;
+		case 'addDev':
+			if (packages.length === 0) {
+				throw new Error('Provide at least one package for pnpm add -D.');
+			}
+			args.push('add', '-D', ...packages);
+			break;
+		case 'remove':
+			if (packages.length === 0) {
+				throw new Error('Provide at least one package for pnpm remove.');
+			}
+			args.push('remove', ...packages);
+			break;
+		case 'lint':
+		case 'test':
+		case 'build':
+			args.push(input.preset);
+			break;
+	}
+
+	return {
+		cmd: 'pnpm',
+		args,
+		timeoutMs: input.timeoutMs,
+	};
+}
+
+function summarizeOutput(output: string): string {
+	const line = output.split('\n').map((v) => v.trim()).find((v) => v.length > 0);
+	if (!line) {
+		return 'no output';
+	}
+	return line.length > 80 ? `${line.slice(0, 80)}...` : line;
 }
 
 async function getCloudApiClient(
