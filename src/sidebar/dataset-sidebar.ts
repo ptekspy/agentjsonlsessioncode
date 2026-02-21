@@ -24,6 +24,8 @@ type SidebarAction =
 	| { type: 'ready' }
 	| { type: 'selectTask' }
 	| { type: 'createTask' }
+	| { type: 'setupCloud' }
+	| { type: 'setApiBaseUrl' }
 	| { type: 'setApiToken' }
 	| { type: 'checkCloudConnection' }
 	| { type: 'startSession' }
@@ -106,6 +108,8 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'ready':
 			case 'selectTask':
 			case 'createTask':
+			case 'setupCloud':
+			case 'setApiBaseUrl':
 			case 'setApiToken':
 			case 'checkCloudConnection':
 			case 'startSession':
@@ -181,40 +185,47 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async handleAction(action: SidebarAction): Promise<void> {
-		if (action.type === 'ready') {
+		try {
+			if (action.type === 'ready') {
+				this.refresh();
+				return;
+			}
+
+			if (action.type === 'runPnpmCommand') {
+				await vscode.commands.executeCommand('dataset.runPnpmCommand', action.payload);
+				this.refresh();
+				return;
+			}
+
+			if (action.type === 'exportTaskJsonl') {
+				await vscode.commands.executeCommand('dataset.exportTaskJsonl', action.payload);
+				this.refresh();
+				return;
+			}
+
+			if (action.type === 'openRecentArtifact') {
+				await vscode.commands.executeCommand('dataset.openRecentArtifact', action.payload.path);
+				return;
+			}
+
+			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'openRecentArtifact'>, string> = {
+				selectTask: 'dataset.selectTask',
+				createTask: 'dataset.createTask',
+				setupCloud: 'dataset.setupCloud',
+				setApiBaseUrl: 'dataset.setApiBaseUrl',
+				setApiToken: 'dataset.setApiToken',
+				checkCloudConnection: 'dataset.checkCloudConnection',
+				startSession: 'dataset.startSession',
+				stopSessionUpload: 'dataset.stopSessionUpload',
+				discardSession: 'dataset.discardSession',
+			};
+
+			await vscode.commands.executeCommand(commandByAction[action.type]);
 			this.refresh();
-			return;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unknown command error';
+			vscode.window.showErrorMessage(`Sidebar action failed: ${message}`);
 		}
-
-		if (action.type === 'runPnpmCommand') {
-			await vscode.commands.executeCommand('dataset.runPnpmCommand', action.payload);
-			this.refresh();
-			return;
-		}
-
-		if (action.type === 'exportTaskJsonl') {
-			await vscode.commands.executeCommand('dataset.exportTaskJsonl', action.payload);
-			this.refresh();
-			return;
-		}
-
-		if (action.type === 'openRecentArtifact') {
-			await vscode.commands.executeCommand('dataset.openRecentArtifact', action.payload.path);
-			return;
-		}
-
-		const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'openRecentArtifact'>, string> = {
-			selectTask: 'dataset.selectTask',
-			createTask: 'dataset.createTask',
-			setApiToken: 'dataset.setApiToken',
-			checkCloudConnection: 'dataset.checkCloudConnection',
-			startSession: 'dataset.startSession',
-			stopSessionUpload: 'dataset.stopSessionUpload',
-			discardSession: 'dataset.discardSession',
-		};
-
-		await vscode.commands.executeCommand(commandByAction[action.type]);
-		this.refresh();
 	}
 
 	private getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {

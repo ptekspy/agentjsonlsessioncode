@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -49,6 +49,14 @@
       {
         "command": "dataset.setApiToken",
         "title": "Dataset: Set API Token"
+      },
+      {
+        "command": "dataset.setApiBaseUrl",
+        "title": "Dataset: Set API Base URL"
+      },
+      {
+        "command": "dataset.setupCloud",
+        "title": "Dataset: Cloud Setup"
       },
       {
         "command": "dataset.checkCloudConnection",
@@ -142,6 +150,7 @@
     "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
+    "prepackage": "pnpm version patch --no-git-tag-version",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

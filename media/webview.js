@@ -21810,6 +21810,8 @@
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "selectTask" }), children: "Select Task" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "createTask" }), children: "Create Task" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setupCloud" }), children: "Cloud Setup" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiBaseUrl" }), children: "Set API Base URL" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiToken" }), children: "Set API Token" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",

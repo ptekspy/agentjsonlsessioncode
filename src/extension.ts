@@ -174,11 +174,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('dataset.setApiToken', async () => {
-			const token = await vscode.window.showInputBox({
-				prompt: 'Set dataset API token',
-				password: true,
-				ignoreFocusOut: true,
-			});
+			const token = await promptForApiToken();
 
 			if (!token) {
 				return;
@@ -192,14 +188,43 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.setupCloud', async () => {
+			try {
+				await ensureCloudConfiguration(context, 'setup');
+				await refreshCloudStatus();
+				vscode.window.showInformationMessage('Cloud setup saved. You can now run Check Cloud Connection.');
+				refreshSidebar();
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.setApiBaseUrl', async () => {
+			const baseUrl = await promptForApiBaseUrl();
+			if (!baseUrl) {
+				return;
+			}
+
+			const config = vscode.workspace.getConfiguration('dataset');
+			await config.update('apiBaseUrl', baseUrl.trim(), vscode.ConfigurationTarget.Global);
+			await refreshCloudStatus();
+			vscode.window.showInformationMessage(`Dataset API base URL set: ${baseUrl.trim()}`);
+			refreshSidebar();
+		}),
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('dataset.checkCloudConnection', async () => {
 			isCloudChecking = true;
 			refreshSidebar();
 			try {
+				await ensureCloudConfiguration(context);
 				const api = await getCloudApiClient(context);
 				if (!api) {
 					await refreshCloudStatus();
-					throw new Error('Set dataset.apiBaseUrl and Dataset API token first.');
+					throw new Error(await buildCloudConfigErrorMessage(context));
 				}
 
 				await api.health();
@@ -559,6 +584,95 @@ async function getCloudConnectionStatus(
 	} catch {
 		return 'unreachable';
 	}
+}
+
+async function promptForApiBaseUrl(): Promise<string | undefined> {
+	const config = vscode.workspace.getConfiguration('dataset');
+	const currentValue = (config.get<string>('apiBaseUrl') ?? '').trim();
+	const baseUrl = await vscode.window.showInputBox({
+		prompt: 'Set dataset API base URL',
+		value: currentValue || 'http://localhost:8787',
+		ignoreFocusOut: true,
+	});
+
+	const normalized = baseUrl?.trim();
+	if (!normalized) {
+		return undefined;
+	}
+
+	if (!/^https?:\/\//i.test(normalized)) {
+		throw new Error('Invalid API base URL. Include http:// or https://');
+	}
+
+	return normalized;
+}
+
+async function promptForApiToken(): Promise<string | undefined> {
+	const token = await vscode.window.showInputBox({
+		prompt: 'Set dataset API token',
+		password: true,
+		ignoreFocusOut: true,
+	});
+
+	const normalizedToken = token?.trim();
+	if (!normalizedToken) {
+		return undefined;
+	}
+
+	return normalizedToken;
+}
+
+async function ensureCloudConfiguration(
+	context: vscode.ExtensionContext,
+	mode: 'check' | 'setup' = 'check',
+): Promise<void> {
+	const config = vscode.workspace.getConfiguration('dataset');
+	const currentBaseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
+	if (!currentBaseUrl) {
+		const baseUrl = await promptForApiBaseUrl();
+		if (!baseUrl) {
+			throw new Error(
+				mode === 'setup'
+					? 'Cloud setup canceled: API base URL is required.'
+					: 'Cloud check canceled: API base URL is required.',
+			);
+		}
+		await config.update('apiBaseUrl', baseUrl, vscode.ConfigurationTarget.Global);
+	}
+
+	const currentToken = await context.secrets.get('dataset.apiToken');
+	if (!currentToken) {
+		const normalizedToken = await promptForApiToken();
+		if (!normalizedToken) {
+			throw new Error(
+				mode === 'setup'
+					? 'Cloud setup canceled: API token is required.'
+					: 'Cloud check canceled: API token is required.',
+			);
+		}
+		await context.secrets.store('dataset.apiToken', normalizedToken);
+	}
+}
+
+async function buildCloudConfigErrorMessage(context: vscode.ExtensionContext): Promise<string> {
+	const config = vscode.workspace.getConfiguration('dataset');
+	const baseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
+	const hasBaseUrl = baseUrl.length > 0;
+	const hasToken = Boolean(await context.secrets.get('dataset.apiToken'));
+
+	if (!hasBaseUrl && !hasToken) {
+		return 'Missing setup: set dataset.apiBaseUrl and run "Dataset: Set API Token".';
+	}
+
+	if (!hasBaseUrl) {
+		return 'Missing setup: set dataset.apiBaseUrl (for local server use http://localhost:8787).';
+	}
+
+	if (!hasToken) {
+		return 'Missing setup: run "Dataset: Set API Token".';
+	}
+
+	return 'Cloud connection is not configured correctly.';
 }
 
 async function addRecentArtifact(

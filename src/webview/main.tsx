@@ -31,6 +31,8 @@ type WebviewToExtension =
 	| { type: 'ready' }
 	| { type: 'selectTask' }
 	| { type: 'createTask' }
+	| { type: 'setupCloud' }
+	| { type: 'setApiBaseUrl' }
 	| { type: 'setApiToken' }
 	| { type: 'checkCloudConnection' }
 	| { type: 'startSession' }
@@ -155,6 +157,12 @@ function App() {
 				</button>
 				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'createTask' })}>
 					Create Task
+				</button>
+				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'setupCloud' })}>
+					Cloud Setup
+				</button>
+				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'setApiBaseUrl' })}>
+					Set API Base URL
 				</button>
 				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'setApiToken' })}>
 					Set API Token
