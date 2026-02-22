@@ -56,6 +56,7 @@ type ActiveSession = {
 	fileChangesSubmitted: boolean;
 	submittedFilesChanged: number;
 	startedAt: string;
+	openedFiles: Set<string>;
 };
 
 type RunCmdEvent = {
@@ -137,11 +138,38 @@ export class SessionManager {
 			fileChangesSubmitted: false,
 			submittedFilesChanged: 0,
 			startedAt: new Date().toISOString(),
+			openedFiles: new Set<string>(),
 		};
 	}
 
 	public discardSession(): void {
 		this.activeSession = undefined;
+	}
+
+	public recordOpenedFile(filePath: string): void {
+		if (!this.activeSession || !filePath) {
+			return;
+		}
+
+		const normalizedFilePath = path.resolve(filePath);
+		const repoRoot = this.activeSession.repoRoot;
+		const normalizedRoot = path.resolve(repoRoot);
+		const withSep = `${normalizedRoot}${path.sep}`;
+
+		if (!normalizedFilePath.startsWith(withSep) && normalizedFilePath !== normalizedRoot) {
+			return;
+		}
+
+		const relativePath = path.relative(repoRoot, normalizedFilePath).replace(/\\/g, '/');
+		if (!relativePath || relativePath.startsWith('..')) {
+			return;
+		}
+
+		if (!this.isIncludedPath(relativePath)) {
+			return;
+		}
+
+		this.activeSession.openedFiles.add(relativePath);
 	}
 
 	public async runAllowedPnpmCommand(input: RunCmdArgs): Promise<string> {
@@ -292,23 +320,24 @@ export class SessionManager {
 	): Promise<{ filesChanged: number; operationsApplied: number }> {
 		const changes = await this.getNameStatusChanges(session.repoRoot, session.baseRef);
 		const filtered = changes.filter((change) => this.isIncludedChange(change));
+		const grepFoundPaths = this.collectSearchablePaths(filtered);
+		const openedMatches = grepFoundPaths.filter((filePath) => session.openedFiles.has(filePath));
 
-		for (const change of filtered) {
-			if (change.kind === 'M' || change.kind === 'D') {
-				const callId = this.nextCallId(session, 'read');
-				session.record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: change.path }));
-				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.path);
-				session.record.messages.push(makeToolResultMessage(callId, content));
-			}
+		if (openedMatches.length > 0) {
+			const searchCallId = this.nextCallId(session, 'search');
+			session.record.messages.push(
+				makeToolCallMessage(searchCallId, 'repo.search', {
+					query: `grep -R --line-number --files-with-matches "." ${grepFoundPaths.join(' ')}`,
+				}),
+			);
+			session.record.messages.push(makeToolResultMessage(searchCallId, this.formatSearchResults(grepFoundPaths)));
+		}
 
-			if (change.kind === 'R') {
-				const callId = this.nextCallId(session, 'read');
-				session.record.messages.push(
-					makeToolCallMessage(callId, 'repo.readFile', { path: change.oldPath }),
-				);
-				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.oldPath);
-				session.record.messages.push(makeToolResultMessage(callId, content));
-			}
+		for (const filePath of openedMatches) {
+			const callId = this.nextCallId(session, 'read');
+			session.record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: filePath }));
+			const content = await this.safeGitShow(session.repoRoot, session.baseRef, filePath);
+			session.record.messages.push(makeToolResultMessage(callId, content));
 		}
 
 		const operations = await this.buildApplyPatchOperations(session.repoRoot, session.baseRef, filtered);
@@ -323,6 +352,30 @@ export class SessionManager {
 			filesChanged: filtered.length,
 			operationsApplied: operations.length,
 		};
+	}
+
+	private collectSearchablePaths(changes: NameStatusChange[]): string[] {
+		const unique = new Set<string>();
+		for (const change of changes) {
+			switch (change.kind) {
+				case 'M':
+				case 'A':
+					unique.add(change.path);
+					break;
+				case 'D':
+					break;
+				case 'R':
+					unique.add(change.oldPath);
+					unique.add(change.newPath);
+					break;
+			}
+		}
+
+		return Array.from(unique).sort((left, right) => left.localeCompare(right));
+	}
+
+	private formatSearchResults(filePaths: string[]): string {
+		return filePaths.join('\n');
 	}
 
 	private async getNameStatusChanges(repoRoot: string, baseRef: string): Promise<NameStatusChange[]> {

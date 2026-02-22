@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.12",
+  "version": "0.0.14",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -172,7 +172,8 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "prepackage": "pnpm version patch --no-git-tag-version",
-    "package": "mkdir -p packages && vsce package --no-dependencies --out packages/agentjsonlsessioncode-$(node -p \"require('./package.json').version\").vsix"
+    "package": "mkdir -p packages && vsce package --no-dependencies --out packages/agentjsonlsessioncode-$(node -p \"require('./package.json').version\").vsix",
+    "install:latest-vsix": "node scripts/install-latest-vsix.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.109.0",

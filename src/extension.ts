@@ -53,6 +53,14 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(DatasetSidebarProvider.viewType, sidebarProvider),
 	);
+	context.subscriptions.push(
+		vscode.workspace.onDidOpenTextDocument((document) => {
+			if (document.uri.scheme !== 'file') {
+				return;
+			}
+			sessionManager.recordOpenedFile(document.uri.fsPath);
+		}),
+	);
 
 	const refreshSidebar = () => sidebarProvider.refresh();
 
