@@ -56,7 +56,8 @@ type ActiveSession = {
 	fileChangesSubmitted: boolean;
 	submittedFilesChanged: number;
 	startedAt: string;
-	openedFiles: Set<string>;
+	lastSearchResults: Set<string>;
+	readFilesRecorded: Set<string>;
 };
 
 type RunCmdEvent = {
@@ -138,7 +139,8 @@ export class SessionManager {
 			fileChangesSubmitted: false,
 			submittedFilesChanged: 0,
 			startedAt: new Date().toISOString(),
-			openedFiles: new Set<string>(),
+			lastSearchResults: new Set<string>(),
+			readFilesRecorded: new Set<string>(),
 		};
 	}
 
@@ -146,7 +148,7 @@ export class SessionManager {
 		this.activeSession = undefined;
 	}
 
-	public recordOpenedFile(filePath: string): void {
+	public async recordOpenedFile(filePath: string): Promise<void> {
 		if (!this.activeSession || !filePath) {
 			return;
 		}
@@ -169,7 +171,50 @@ export class SessionManager {
 			return;
 		}
 
-		this.activeSession.openedFiles.add(relativePath);
+		if (!this.activeSession.lastSearchResults.has(relativePath)) {
+			return;
+		}
+
+		if (this.activeSession.readFilesRecorded.has(relativePath)) {
+			return;
+		}
+
+		const callId = this.nextCallId(this.activeSession, 'read');
+		this.activeSession.record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: relativePath }));
+
+		try {
+			const content = await this.readTextFile(normalizedFilePath);
+			this.activeSession.record.messages.push(makeToolResultMessage(callId, content));
+		} catch {
+			this.activeSession.record.messages.push(makeToolResultMessage(callId, '[unable to read file]'));
+		}
+
+		this.activeSession.readFilesRecorded.add(relativePath);
+	}
+
+	public async searchRepo(query: string): Promise<string[]> {
+		if (!this.activeSession) {
+			throw new Error('Start a session before running repo search.');
+		}
+
+		const trimmedQuery = query.trim();
+		if (!trimmedQuery) {
+			throw new Error('Search query is required.');
+		}
+
+		const files = await this.runRepoSearch(this.activeSession.repoRoot, trimmedQuery);
+		const callId = this.nextCallId(this.activeSession, 'search');
+		this.activeSession.record.messages.push(
+			makeToolCallMessage(callId, 'repo.search', {
+				query: trimmedQuery,
+			}),
+		);
+		this.activeSession.record.messages.push(
+			makeToolResultMessage(callId, files.length > 0 ? files.join('\n') : '[no matches]'),
+		);
+
+		this.activeSession.lastSearchResults = new Set(files);
+		return files;
 	}
 
 	public async runAllowedPnpmCommand(input: RunCmdArgs): Promise<string> {
@@ -188,7 +233,7 @@ export class SessionManager {
 		const timeoutMs = normalized.timeoutMs ?? 120_000;
 
 		const { output: rawOutput, failed } = await this.runPnpmWithLiveTerminal(recordedArgs, cwd, timeoutMs);
-		const output = this.truncateOutput(this.redactOutput(rawOutput));
+		const output = this.truncateOutput(this.redactOutput(this.stripAnsi(rawOutput)));
 
 		this.activeSession.runCmdEvents.push({ args: recordedArgs, output });
 		this.activeSession.commandsRun.push(`pnpm ${normalized.args.join(' ')}`);
@@ -281,12 +326,7 @@ export class SessionManager {
 			},
 		};
 
-		const folder = vscode.workspace.workspaceFolders?.[0];
-		if (!folder) {
-			throw new Error('No workspace folder found while writing session record.');
-		}
-
-		const outputRoot = path.join(folder.uri.fsPath, '.agent-dataset', 'sessions');
+		const outputRoot = path.join(context.globalStorageUri.fsPath, 'sessions');
 		await fs.mkdir(outputRoot, { recursive: true });
 		const fileName = `${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
 		const outputPath = path.join(outputRoot, fileName);
@@ -320,24 +360,41 @@ export class SessionManager {
 	): Promise<{ filesChanged: number; operationsApplied: number }> {
 		const changes = await this.getNameStatusChanges(session.repoRoot, session.baseRef);
 		const filtered = changes.filter((change) => this.isIncludedChange(change));
-		const grepFoundPaths = this.collectSearchablePaths(filtered);
-		const openedMatches = grepFoundPaths.filter((filePath) => session.openedFiles.has(filePath));
 
-		if (openedMatches.length > 0) {
-			const searchCallId = this.nextCallId(session, 'search');
-			session.record.messages.push(
-				makeToolCallMessage(searchCallId, 'repo.search', {
-					query: `grep -R --line-number --files-with-matches "." ${grepFoundPaths.join(' ')}`,
-				}),
-			);
-			session.record.messages.push(makeToolResultMessage(searchCallId, this.formatSearchResults(grepFoundPaths)));
-		}
+		for (const change of filtered) {
+			if (change.kind === 'M' || change.kind === 'D') {
+				if (session.readFilesRecorded.has(change.path)) {
+					continue;
+				}
 
-		for (const filePath of openedMatches) {
-			const callId = this.nextCallId(session, 'read');
-			session.record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: filePath }));
-			const content = await this.safeGitShow(session.repoRoot, session.baseRef, filePath);
-			session.record.messages.push(makeToolResultMessage(callId, content));
+				const callId = this.nextCallId(session, 'read');
+				session.record.messages.push(makeToolCallMessage(callId, 'repo.readFile', { path: change.path }));
+				const content = await this.safeGitShow(session.repoRoot, session.baseRef, change.path);
+				session.record.messages.push(makeToolResultMessage(callId, content));
+				session.readFilesRecorded.add(change.path);
+			}
+
+			if (change.kind === 'R') {
+				if (!session.readFilesRecorded.has(change.oldPath)) {
+					const oldCallId = this.nextCallId(session, 'read');
+					session.record.messages.push(
+						makeToolCallMessage(oldCallId, 'repo.readFile', { path: change.oldPath }),
+					);
+					const oldContent = await this.safeGitShow(session.repoRoot, session.baseRef, change.oldPath);
+					session.record.messages.push(makeToolResultMessage(oldCallId, oldContent));
+					session.readFilesRecorded.add(change.oldPath);
+				}
+
+				if (!session.readFilesRecorded.has(change.newPath)) {
+					const newCallId = this.nextCallId(session, 'read');
+					session.record.messages.push(
+						makeToolCallMessage(newCallId, 'repo.readFile', { path: change.newPath }),
+					);
+					const newContent = await this.safeGitShow(session.repoRoot, session.baseRef, change.newPath);
+					session.record.messages.push(makeToolResultMessage(newCallId, newContent));
+					session.readFilesRecorded.add(change.newPath);
+				}
+			}
 		}
 
 		const operations = await this.buildApplyPatchOperations(session.repoRoot, session.baseRef, filtered);
@@ -354,28 +411,25 @@ export class SessionManager {
 		};
 	}
 
-	private collectSearchablePaths(changes: NameStatusChange[]): string[] {
-		const unique = new Set<string>();
-		for (const change of changes) {
-			switch (change.kind) {
-				case 'M':
-				case 'A':
-					unique.add(change.path);
-					break;
-				case 'D':
-					break;
-				case 'R':
-					unique.add(change.oldPath);
-					unique.add(change.newPath);
-					break;
+	private async runRepoSearch(repoRoot: string, query: string): Promise<string[]> {
+		try {
+			const output = await this.git(repoRoot, ['grep', '--line-number', '--files-with-matches', '--full-name', '--', query]);
+			return output
+				.split('\n')
+				.map((line) => line.trim())
+				.filter(Boolean)
+				.filter((filePath) => this.isIncludedPath(filePath));
+		} catch (error) {
+			if (
+				error &&
+				typeof error === 'object' &&
+				'code' in error &&
+				(error as { code?: number | string }).code === 1
+			) {
+				return [];
 			}
+			throw error;
 		}
-
-		return Array.from(unique).sort((left, right) => left.localeCompare(right));
-	}
-
-	private formatSearchResults(filePaths: string[]): string {
-		return filePaths.join('\n');
 	}
 
 	private async getNameStatusChanges(repoRoot: string, baseRef: string): Promise<NameStatusChange[]> {
@@ -610,6 +664,10 @@ export class SessionManager {
 			redacted = redacted.replace(regex, '[REDACTED]');
 		}
 		return redacted;
+	}
+
+	private stripAnsi(output: string): string {
+		return output.replace(/\u001B\[[0-9;]*[ -/]*[@-~]/g, '');
 	}
 
 	private getRedactionRegexes(): RegExp[] {

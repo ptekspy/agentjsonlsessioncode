@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
 	let isCloudChecking = false;
 	let lastCloudCheckAt: string | undefined;
 	const getSidebarState = () => ({
-		taskId: context.workspaceState.get<string>('dataset.taskId') ?? 'default',
+		taskId: (context.workspaceState.get<string>('dataset.taskId') ?? '').trim(),
 		isSessionActive: sessionManager.hasActiveSession(),
 		defaultSystemPrompt:
 			vscode.workspace
@@ -58,7 +58,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (document.uri.scheme !== 'file') {
 				return;
 			}
-			sessionManager.recordOpenedFile(document.uri.fsPath);
+			void sessionManager.recordOpenedFile(document.uri.fsPath);
 		}),
 	);
 
@@ -501,8 +501,11 @@ export function activate(context: vscode.ExtensionContext) {
 			'dataset.startSession',
 			async (input?: { systemPrompt?: string; userPrompt?: string }) => {
 			try {
-				const taskId =
-					(context.workspaceState.get<string>('dataset.taskId') ?? '').trim() || 'default';
+				const taskId = (context.workspaceState.get<string>('dataset.taskId') ?? '').trim();
+				if (!taskId) {
+					vscode.window.showErrorMessage('Select or create a task before starting a session.');
+					return;
+				}
 				const configuredSystemPrompt = vscode.workspace
 					.getConfiguration('dataset')
 					.get<string>('defaultSystemPrompt', DEFAULT_SYSTEM_PROMPT)
@@ -551,6 +554,52 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			},
 		),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.searchRepo', async (input?: { query?: string }) => {
+			try {
+				const provided = (input?.query ?? '').trim();
+				const query =
+					provided ||
+					(
+						await vscode.window.showInputBox({
+							prompt: 'Search query for repo.search (grep pattern)',
+							placeHolder: 'useState|TODO|functionName',
+							ignoreFocusOut: true,
+						})
+					)?.trim() ||
+					'';
+
+				if (!query) {
+					return;
+				}
+
+				const files = await sessionManager.searchRepo(query);
+				if (files.length === 0) {
+					vscode.window.showInformationMessage('No files matched the search query.');
+					refreshSidebar();
+					return;
+				}
+
+				const selected = await vscode.window.showQuickPick(files, {
+					placeHolder: `Search matched ${files.length} file(s). Open one to record repo.readFile.`,
+				});
+
+				if (selected) {
+					const folder = vscode.workspace.workspaceFolders?.[0];
+					if (folder) {
+						const fileUri = vscode.Uri.joinPath(folder.uri, selected);
+						await vscode.commands.executeCommand('vscode.open', fileUri);
+					}
+				}
+
+				vscode.window.showInformationMessage(`Recorded repo.search with ${files.length} match(es).`);
+				refreshSidebar();
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
 	);
 
 	context.subscriptions.push(
@@ -633,8 +682,10 @@ export function activate(context: vscode.ExtensionContext) {
 			'dataset.exportTaskJsonl',
 			async (input?: { since?: string; limit?: number }) => {
 			try {
-				const taskId =
-					(context.workspaceState.get<string>('dataset.taskId') ?? '').trim() || 'default';
+				const taskId = (context.workspaceState.get<string>('dataset.taskId') ?? '').trim();
+				if (!taskId) {
+					throw new Error('Select or create a task before exporting JSONL.');
+				}
 				const api = await getCloudApiClient(context);
 				if (!api) {
 					await refreshCloudStatus();
@@ -652,12 +703,7 @@ export function activate(context: vscode.ExtensionContext) {
 					since: since || undefined,
 					limit,
 				});
-				const folder = vscode.workspace.workspaceFolders?.[0];
-				if (!folder) {
-					throw new Error('No workspace folder available for export output.');
-				}
-
-				const exportDir = path.join(folder.uri.fsPath, '.agent-dataset', 'exports');
+				const exportDir = path.join(context.globalStorageUri.fsPath, 'exports');
 				await fs.mkdir(exportDir, { recursive: true });
 				const outputPath = path.join(
 					exportDir,

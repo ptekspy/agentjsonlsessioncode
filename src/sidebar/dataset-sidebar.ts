@@ -50,6 +50,12 @@ type SidebarAction =
 			};
 	  }
 	| {
+			type: 'searchRepo';
+			payload: {
+				query?: string;
+			};
+	  }
+	| {
 			type: 'exportTaskJsonl';
 			payload: {
 				since?: string;
@@ -129,6 +135,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'submitFileChanges':
 			case 'stopSessionUpload':
 			case 'runPnpmCommand':
+			case 'searchRepo':
 			case 'exportTaskJsonl':
 			case 'importJsonlUpdates':
 			case 'openRecentArtifact':
@@ -180,6 +187,19 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 							filter: typeof typed.filter === 'string' ? typed.filter : undefined,
 							packages: typeof typed.packages === 'string' ? typed.packages : undefined,
 							timeoutMs: typeof typed.timeoutMs === 'number' ? typed.timeoutMs : undefined,
+						},
+					};
+				}
+				if (maybeType === 'searchRepo') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return { type: 'searchRepo', payload: {} };
+					}
+					const typed = payload as { query?: unknown };
+					return {
+						type: 'searchRepo',
+						payload: {
+							query: typeof typed.query === 'string' ? typed.query : undefined,
 						},
 					};
 				}
@@ -241,6 +261,12 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
+			if (action.type === 'searchRepo') {
+				await vscode.commands.executeCommand('dataset.searchRepo', action.payload);
+				this.refresh();
+				return;
+			}
+
 			if (action.type === 'exportTaskJsonl') {
 				await vscode.commands.executeCommand('dataset.exportTaskJsonl', action.payload);
 				this.refresh();
@@ -270,7 +296,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
-			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'importJsonlUpdates' | 'openRecentArtifact' | 'deleteRecentArtifact' | 'startSession'>, string> = {
+			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'searchRepo' | 'exportTaskJsonl' | 'importJsonlUpdates' | 'openRecentArtifact' | 'deleteRecentArtifact' | 'startSession'>, string> = {
 				selectTask: 'dataset.selectTask',
 				createTask: 'dataset.createTask',
 				setupCloud: 'dataset.setupCloud',

@@ -57,6 +57,12 @@ type WebviewToExtension =
 			};
 	  }
 	| {
+			type: 'searchRepo';
+			payload: {
+				query?: string;
+			};
+	  }
+	| {
 			type: 'exportTaskJsonl';
 			payload: {
 				since?: string;
@@ -82,6 +88,7 @@ function App() {
 	const [filter, setFilter] = useState('');
 	const [packages, setPackages] = useState('');
 	const [timeoutSec, setTimeoutSec] = useState('120');
+	const [searchQuery, setSearchQuery] = useState('');
 	const [exportSince, setExportSince] = useState('');
 	const [exportLimit, setExportLimit] = useState('');
 	const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
@@ -137,6 +144,15 @@ function App() {
 		});
 	};
 
+	const runSearch = () => {
+		vscode.postMessage({
+			type: 'searchRepo',
+			payload: {
+				query: searchQuery.trim() || undefined,
+			},
+		});
+	};
+
 	const startSession = () => {
 		vscode.postMessage({
 			type: 'startSession',
@@ -151,35 +167,32 @@ function App() {
 		<main style={styles.container}>
 			<div style={styles.headerRow}>
 				<h2 style={styles.title}>Session Recorder</h2>
-				<div style={styles.cloudMeta}>
-					{state.cloudStatus ? (
-						<span style={getCloudBadgeStyle(state.cloudStatus)}>{formatCloudStatus(state.cloudStatus)}</span>
-					) : null}
-					{state.lastCloudCheckAt ? (
-						<span style={styles.cloudTimestamp}>
-							Last check: {formatTimestamp(state.lastCloudCheckAt)}
-						</span>
-					) : null}
-				</div>
 			</div>
-			<p style={styles.meta}>Task: {state.taskId || 'default'}</p>
-			<p style={styles.meta}>Status: {statusText}</p>
-			{state.lastSessionSummary ? (
-				<p style={styles.meta}>
-					Last Session: {state.lastSessionSummary.filesChanged} files,{' '}
-					{state.lastSessionSummary.commandsRecorded} commands
-				</p>
-			) : null}
-			{state.lastSessionStatus ? (
-				<div style={styles.qualityRow}>
-					<span style={styles.meta}>Last Session Quality:</span>
-					<span style={getQualityBadgeStyle(state.lastSessionStatus)}>{state.lastSessionStatus}</span>
-				</div>
-			) : null}
-			{state.lastRecordPath ? <p style={styles.path}>Last record: {state.lastRecordPath}</p> : null}
 
-			<div style={styles.sectionCard}>
+			<details style={styles.sectionCard}>
+				<summary style={styles.sectionSummary}>Section 1: Session + Cloud</summary>
 				<div style={styles.section}>
+				<p style={styles.meta}>Task: {state.taskId || 'default'}</p>
+				<p style={styles.meta}>Status: {statusText}</p>
+				{state.lastSessionSummary ? (
+					<p style={styles.meta}>
+						Last Session: {state.lastSessionSummary.filesChanged} files,{' '}
+						{state.lastSessionSummary.commandsRecorded} commands
+					</p>
+				) : null}
+				{state.lastSessionStatus ? (
+					<div style={styles.qualityRow}>
+						<span style={styles.meta}>Last Session Quality:</span>
+						<span style={getQualityBadgeStyle(state.lastSessionStatus)}>{state.lastSessionStatus}</span>
+					</div>
+				) : null}
+				{state.lastRecordPath ? <p style={styles.path}>Last record: {state.lastRecordPath}</p> : null}
+				{state.cloudStatus ? (
+					<span style={getCloudBadgeStyle(state.cloudStatus)}>{formatCloudStatus(state.cloudStatus)}</span>
+				) : null}
+				{state.lastCloudCheckAt ? (
+					<span style={styles.cloudTimestamp}>Last check: {formatTimestamp(state.lastCloudCheckAt)}</span>
+				) : null}
 				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'selectTask' })}>
 					Select Task
 				</button>
@@ -204,6 +217,82 @@ function App() {
 				</button>
 				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'syncLocalSessions' })}>
 					Sync Local Sessions
+				</button>
+				</div>
+			</details>
+
+			<details style={styles.sectionCard} open>
+				<summary style={styles.sectionSummary}>Section 2: Session Controls</summary>
+				<div style={styles.section}>
+				<button
+					style={styles.button}
+					onClick={() => setIsCreateSessionOpen((current) => !current)}
+					disabled={state.isSessionActive}
+				>
+					{isCreateSessionOpen ? 'Hide Create Session' : 'Create Session'}
+				</button>
+				{isCreateSessionOpen ? (
+					<>
+						<textarea
+							style={styles.textarea}
+							placeholder="System prompt"
+							value={systemPrompt}
+							onChange={(event) => setSystemPrompt(event.target.value)}
+							disabled={state.isSessionActive}
+						/>
+						<textarea
+							style={styles.textarea}
+							placeholder="User prompt"
+							value={userPrompt}
+							onChange={(event) => setUserPrompt(event.target.value)}
+							disabled={state.isSessionActive}
+						/>
+						<button
+							style={styles.button}
+							onClick={startSession}
+							disabled={state.isSessionActive || !systemPrompt.trim() || !userPrompt.trim()}
+						>
+							Start Session
+						</button>
+					</>
+				) : null}
+				<button
+					style={styles.button}
+					onClick={() => vscode.postMessage({ type: 'stopSessionUpload' })}
+					disabled={!state.isSessionActive}
+				>
+					Stop Session
+				</button>
+				<button
+					style={styles.button}
+					onClick={() => vscode.postMessage({ type: 'submitFileChanges' })}
+					disabled={!state.isSessionActive}
+				>
+					Submit File Changes
+				</button>
+				<button
+					style={styles.button}
+					onClick={() => vscode.postMessage({ type: 'discardSession' })}
+					disabled={!state.isSessionActive}
+				>
+					Discard Session
+				</button>
+				</div>
+			</details>
+
+			<div style={styles.sectionCard}>
+				<div style={styles.section}>
+				<h3 style={styles.sectionTitle}>search</h3>
+				<input
+					style={styles.input}
+					placeholder="grep query (e.g. useState|TODO|function name)"
+					value={searchQuery}
+					onChange={(event) => setSearchQuery(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<p style={styles.helperText}>Runs `repo.search` and lets you open a matched file.</p>
+				<button style={styles.button} onClick={runSearch} disabled={!state.isSessionActive || !searchQuery.trim()}>
+					Search Repo
 				</button>
 				</div>
 			</div>
@@ -326,64 +415,6 @@ function App() {
 				)}
 				</div>
 			</div>
-
-			<div style={styles.sectionCard}>
-				<div style={styles.section}>
-				<button
-					style={styles.button}
-					onClick={() => setIsCreateSessionOpen((current) => !current)}
-					disabled={state.isSessionActive}
-				>
-					{isCreateSessionOpen ? 'Hide Create Session' : 'Create Session'}
-				</button>
-				{isCreateSessionOpen ? (
-					<>
-						<textarea
-							style={styles.textarea}
-							placeholder="System prompt"
-							value={systemPrompt}
-							onChange={(event) => setSystemPrompt(event.target.value)}
-							disabled={state.isSessionActive}
-						/>
-						<textarea
-							style={styles.textarea}
-							placeholder="User prompt"
-							value={userPrompt}
-							onChange={(event) => setUserPrompt(event.target.value)}
-							disabled={state.isSessionActive}
-						/>
-						<button
-							style={styles.button}
-							onClick={startSession}
-							disabled={state.isSessionActive || !systemPrompt.trim() || !userPrompt.trim()}
-						>
-							Start Session
-						</button>
-					</>
-				) : null}
-				<button
-					style={styles.button}
-					onClick={() => vscode.postMessage({ type: 'stopSessionUpload' })}
-					disabled={!state.isSessionActive}
-				>
-					Stop Session
-				</button>
-				<button
-					style={styles.button}
-					onClick={() => vscode.postMessage({ type: 'submitFileChanges' })}
-					disabled={!state.isSessionActive}
-				>
-					Submit File Changes
-				</button>
-				<button
-					style={styles.button}
-					onClick={() => vscode.postMessage({ type: 'discardSession' })}
-					disabled={!state.isSessionActive}
-				>
-					Discard Session
-				</button>
-				</div>
-			</div>
 		</main>
 	);
 }
@@ -417,6 +448,12 @@ const styles: Record<string, React.CSSProperties> = {
 	title: {
 		fontSize: '1rem',
 		margin: 0,
+	},
+	sectionSummary: {
+		cursor: 'pointer',
+		fontWeight: 600,
+		fontSize: '0.85rem',
+		marginBottom: 8,
 	},
 	meta: {
 		margin: 0,

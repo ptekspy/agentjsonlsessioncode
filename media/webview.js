@@ -21732,6 +21732,7 @@
     const [filter, setFilter] = (0, import_react.useState)("");
     const [packages, setPackages] = (0, import_react.useState)("");
     const [timeoutSec, setTimeoutSec] = (0, import_react.useState)("120");
+    const [searchQuery, setSearchQuery] = (0, import_react.useState)("");
     const [exportSince, setExportSince] = (0, import_react.useState)("");
     const [exportLimit, setExportLimit] = (0, import_react.useState)("");
     const [isCreateSessionOpen, setIsCreateSessionOpen] = (0, import_react.useState)(false);
@@ -21778,6 +21779,14 @@
         }
       });
     };
+    const runSearch = () => {
+      vscode.postMessage({
+        type: "searchRepo",
+        payload: {
+          query: searchQuery.trim() || void 0
+        }
+      });
+    };
     const startSession = () => {
       vscode.postMessage({
         type: "startSession",
@@ -21788,56 +21797,142 @@
       });
     };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("main", { style: styles.container, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.headerRow, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { style: styles.title, children: "Session Recorder" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.cloudMeta, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.headerRow, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { style: styles.title, children: "Session Recorder" }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { style: styles.sectionCard, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("summary", { style: styles.sectionSummary, children: "Section 1: Session + Cloud" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
+            "Task: ",
+            state.taskId || "default"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
+            "Status: ",
+            statusText
+          ] }),
+          state.lastSessionSummary ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
+            "Last Session: ",
+            state.lastSessionSummary.filesChanged,
+            " files,",
+            " ",
+            state.lastSessionSummary.commandsRecorded,
+            " commands"
+          ] }) : null,
+          state.lastSessionStatus ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.qualityRow, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.meta, children: "Last Session Quality:" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: getQualityBadgeStyle(state.lastSessionStatus), children: state.lastSessionStatus })
+          ] }) : null,
+          state.lastRecordPath ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.path, children: [
+            "Last record: ",
+            state.lastRecordPath
+          ] }) : null,
           state.cloudStatus ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: getCloudBadgeStyle(state.cloudStatus), children: formatCloudStatus(state.cloudStatus) }) : null,
           state.lastCloudCheckAt ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: styles.cloudTimestamp, children: [
             "Last check: ",
             formatTimestamp(state.lastCloudCheckAt)
-          ] }) : null
+          ] }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "selectTask" }), children: "Select Task" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "createTask" }), children: "Create Task" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setupCloud" }), children: "Cloud Setup" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiBaseUrl" }), children: "Set API Base URL" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiToken" }), children: "Set API Token" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              style: styles.button,
+              onClick: () => vscode.postMessage({ type: "checkCloudConnection" }),
+              disabled: Boolean(state.isCloudChecking),
+              children: state.isCloudChecking ? "Checking Cloud\u2026" : "Check Cloud Connection"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "syncLocalSessions" }), children: "Sync Local Sessions" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
-        "Task: ",
-        state.taskId || "default"
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { style: styles.sectionCard, open: true, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("summary", { style: styles.sectionSummary, children: "Section 2: Session Controls" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              style: styles.button,
+              onClick: () => setIsCreateSessionOpen((current) => !current),
+              disabled: state.isSessionActive,
+              children: isCreateSessionOpen ? "Hide Create Session" : "Create Session"
+            }
+          ),
+          isCreateSessionOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "textarea",
+              {
+                style: styles.textarea,
+                placeholder: "System prompt",
+                value: systemPrompt,
+                onChange: (event) => setSystemPrompt(event.target.value),
+                disabled: state.isSessionActive
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "textarea",
+              {
+                style: styles.textarea,
+                placeholder: "User prompt",
+                value: userPrompt,
+                onChange: (event) => setUserPrompt(event.target.value),
+                disabled: state.isSessionActive
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                style: styles.button,
+                onClick: startSession,
+                disabled: state.isSessionActive || !systemPrompt.trim() || !userPrompt.trim(),
+                children: "Start Session"
+              }
+            )
+          ] }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              style: styles.button,
+              onClick: () => vscode.postMessage({ type: "stopSessionUpload" }),
+              disabled: !state.isSessionActive,
+              children: "Stop Session"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              style: styles.button,
+              onClick: () => vscode.postMessage({ type: "submitFileChanges" }),
+              disabled: !state.isSessionActive,
+              children: "Submit File Changes"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              style: styles.button,
+              onClick: () => vscode.postMessage({ type: "discardSession" }),
+              disabled: !state.isSessionActive,
+              children: "Discard Session"
+            }
+          )
+        ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
-        "Status: ",
-        statusText
-      ] }),
-      state.lastSessionSummary ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.meta, children: [
-        "Last Session: ",
-        state.lastSessionSummary.filesChanged,
-        " files,",
-        " ",
-        state.lastSessionSummary.commandsRecorded,
-        " commands"
-      ] }) : null,
-      state.lastSessionStatus ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.qualityRow, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: styles.meta, children: "Last Session Quality:" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: getQualityBadgeStyle(state.lastSessionStatus), children: state.lastSessionStatus })
-      ] }) : null,
-      state.lastRecordPath ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: styles.path, children: [
-        "Last record: ",
-        state.lastRecordPath
-      ] }) : null,
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "selectTask" }), children: "Select Task" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "createTask" }), children: "Create Task" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setupCloud" }), children: "Cloud Setup" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiBaseUrl" }), children: "Set API Base URL" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "setApiToken" }), children: "Set API Token" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "search" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
+          "input",
           {
-            style: styles.button,
-            onClick: () => vscode.postMessage({ type: "checkCloudConnection" }),
-            disabled: Boolean(state.isCloudChecking),
-            children: state.isCloudChecking ? "Checking Cloud\u2026" : "Check Cloud Connection"
+            style: styles.input,
+            placeholder: "grep query (e.g. useState|TODO|function name)",
+            value: searchQuery,
+            onChange: (event) => setSearchQuery(event.target.value),
+            disabled: !state.isSessionActive
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "syncLocalSessions" }), children: "Sync Local Sessions" })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Runs `repo.search` and lets you open a matched file." }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: runSearch, disabled: !state.isSessionActive || !searchQuery.trim(), children: "Search Repo" })
       ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "run_cmd" }),
@@ -21943,75 +22038,6 @@
           },
           `${artifact.type}:${artifact.path}`
         )) })
-      ] }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            style: styles.button,
-            onClick: () => setIsCreateSessionOpen((current) => !current),
-            disabled: state.isSessionActive,
-            children: isCreateSessionOpen ? "Hide Create Session" : "Create Session"
-          }
-        ),
-        isCreateSessionOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "textarea",
-            {
-              style: styles.textarea,
-              placeholder: "System prompt",
-              value: systemPrompt,
-              onChange: (event) => setSystemPrompt(event.target.value),
-              disabled: state.isSessionActive
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "textarea",
-            {
-              style: styles.textarea,
-              placeholder: "User prompt",
-              value: userPrompt,
-              onChange: (event) => setUserPrompt(event.target.value),
-              disabled: state.isSessionActive
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              style: styles.button,
-              onClick: startSession,
-              disabled: state.isSessionActive || !systemPrompt.trim() || !userPrompt.trim(),
-              children: "Start Session"
-            }
-          )
-        ] }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            style: styles.button,
-            onClick: () => vscode.postMessage({ type: "stopSessionUpload" }),
-            disabled: !state.isSessionActive,
-            children: "Stop Session"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            style: styles.button,
-            onClick: () => vscode.postMessage({ type: "submitFileChanges" }),
-            disabled: !state.isSessionActive,
-            children: "Submit File Changes"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            style: styles.button,
-            onClick: () => vscode.postMessage({ type: "discardSession" }),
-            disabled: !state.isSessionActive,
-            children: "Discard Session"
-          }
-        )
       ] }) })
     ] });
   }
@@ -22044,6 +22070,12 @@
     title: {
       fontSize: "1rem",
       margin: 0
+    },
+    sectionSummary: {
+      cursor: "pointer",
+      fontWeight: 600,
+      fontSize: "0.85rem",
+      marginBottom: 8
     },
     meta: {
       margin: 0,
