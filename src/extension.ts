@@ -557,9 +557,16 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('dataset.searchRepo', async (input?: { query?: string }) => {
+		vscode.commands.registerCommand(
+			'dataset.searchRepo',
+			async (input?: { query?: string; path?: string; maxResults?: number }) => {
 			try {
 				const provided = (input?.query ?? '').trim();
+				const searchPath = (input?.path ?? '').trim() || './';
+				const maxResults =
+					typeof input?.maxResults === 'number' && Number.isFinite(input.maxResults) && input.maxResults > 0
+						? Math.floor(input.maxResults)
+						: 20;
 				const query =
 					provided ||
 					(
@@ -575,15 +582,20 @@ export function activate(context: vscode.ExtensionContext) {
 					return;
 				}
 
-				const files = await sessionManager.searchRepo(query);
-				if (files.length === 0) {
+				const results = await sessionManager.searchRepo(query, {
+					path: searchPath,
+					maxResults,
+				});
+				if (results.length === 0) {
 					vscode.window.showInformationMessage('No files matched the search query.');
 					refreshSidebar();
 					return;
 				}
 
-				const selected = await vscode.window.showQuickPick(files, {
-					placeHolder: `Search matched ${files.length} file(s). Open one to record repo.readFile.`,
+				const uniqueFiles = Array.from(new Set(results.map((result) => result.path)));
+
+				const selected = await vscode.window.showQuickPick(uniqueFiles, {
+					placeHolder: `Search matched ${results.length} result(s) across ${uniqueFiles.length} file(s). Open one to record repo.readFile.`,
 				});
 
 				if (selected) {
@@ -594,12 +606,15 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 				}
 
-				vscode.window.showInformationMessage(`Recorded repo.search with ${files.length} match(es).`);
+				vscode.window.showInformationMessage(
+					`Recorded repo.search with ${results.length} result(s) across ${uniqueFiles.length} file(s).`,
+				);
 				refreshSidebar();
 			} catch (error) {
 				vscode.window.showErrorMessage(toErrorMessage(error));
 			}
-		}),
+			},
+		),
 	);
 
 	context.subscriptions.push(

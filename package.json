@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.16",
+  "version": "0.0.18",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",

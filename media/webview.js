@@ -21733,6 +21733,8 @@
     const [packages, setPackages] = (0, import_react.useState)("");
     const [timeoutSec, setTimeoutSec] = (0, import_react.useState)("120");
     const [searchQuery, setSearchQuery] = (0, import_react.useState)("");
+    const [searchPath, setSearchPath] = (0, import_react.useState)("./");
+    const [searchMaxResults, setSearchMaxResults] = (0, import_react.useState)("20");
     const [exportSince, setExportSince] = (0, import_react.useState)("");
     const [exportLimit, setExportLimit] = (0, import_react.useState)("");
     const [isCreateSessionOpen, setIsCreateSessionOpen] = (0, import_react.useState)(false);
@@ -21780,10 +21782,13 @@
       });
     };
     const runSearch = () => {
+      const max = Number(searchMaxResults);
       vscode.postMessage({
         type: "searchRepo",
         payload: {
-          query: searchQuery.trim() || void 0
+          query: searchQuery.trim() || void 0,
+          path: searchPath.trim() || "./",
+          maxResults: Number.isFinite(max) && max > 0 ? Math.floor(max) : 20
         }
       });
     };
@@ -21925,13 +21930,33 @@
           "input",
           {
             style: styles.input,
+            placeholder: "search path (default ./)",
+            value: searchPath,
+            onChange: (event) => setSearchPath(event.target.value),
+            disabled: !state.isSessionActive
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
+            placeholder: "max results (default 20)",
+            value: searchMaxResults,
+            onChange: (event) => setSearchMaxResults(event.target.value),
+            disabled: !state.isSessionActive
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            style: styles.input,
             placeholder: "grep query (e.g. useState|TODO|function name)",
             value: searchQuery,
             onChange: (event) => setSearchQuery(event.target.value),
             disabled: !state.isSessionActive
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Runs `repo.search` and lets you open a matched file." }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Path is workspace-relative (e.g. `./`, `./packages/`)." }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: runSearch, disabled: !state.isSessionActive || !searchQuery.trim(), children: "Search Repo" })
       ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [

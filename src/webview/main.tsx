@@ -60,6 +60,8 @@ type WebviewToExtension =
 			type: 'searchRepo';
 			payload: {
 				query?: string;
+				path?: string;
+				maxResults?: number;
 			};
 	  }
 	| {
@@ -89,6 +91,8 @@ function App() {
 	const [packages, setPackages] = useState('');
 	const [timeoutSec, setTimeoutSec] = useState('120');
 	const [searchQuery, setSearchQuery] = useState('');
+	const [searchPath, setSearchPath] = useState('./');
+	const [searchMaxResults, setSearchMaxResults] = useState('20');
 	const [exportSince, setExportSince] = useState('');
 	const [exportLimit, setExportLimit] = useState('');
 	const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
@@ -145,10 +149,13 @@ function App() {
 	};
 
 	const runSearch = () => {
+		const max = Number(searchMaxResults);
 		vscode.postMessage({
 			type: 'searchRepo',
 			payload: {
 				query: searchQuery.trim() || undefined,
+				path: searchPath.trim() || './',
+				maxResults: Number.isFinite(max) && max > 0 ? Math.floor(max) : 20,
 			},
 		});
 	};
@@ -285,12 +292,26 @@ function App() {
 				<h3 style={styles.sectionTitle}>search</h3>
 				<input
 					style={styles.input}
+					placeholder="search path (default ./)"
+					value={searchPath}
+					onChange={(event) => setSearchPath(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<input
+					style={styles.input}
+					placeholder="max results (default 20)"
+					value={searchMaxResults}
+					onChange={(event) => setSearchMaxResults(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<input
+					style={styles.input}
 					placeholder="grep query (e.g. useState|TODO|function name)"
 					value={searchQuery}
 					onChange={(event) => setSearchQuery(event.target.value)}
 					disabled={!state.isSessionActive}
 				/>
-				<p style={styles.helperText}>Runs `repo.search` and lets you open a matched file.</p>
+				<p style={styles.helperText}>Path is workspace-relative (e.g. `./`, `./packages/`).</p>
 				<button style={styles.button} onClick={runSearch} disabled={!state.isSessionActive || !searchQuery.trim()}>
 					Search Repo
 				</button>

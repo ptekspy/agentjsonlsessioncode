@@ -53,6 +53,8 @@ type SidebarAction =
 			type: 'searchRepo';
 			payload: {
 				query?: string;
+				path?: string;
+				maxResults?: number;
 			};
 	  }
 	| {
@@ -195,11 +197,14 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 					if (!payload || typeof payload !== 'object') {
 						return { type: 'searchRepo', payload: {} };
 					}
-					const typed = payload as { query?: unknown };
+					const typed = payload as { query?: unknown; path?: unknown; maxResults?: unknown };
 					return {
 						type: 'searchRepo',
 						payload: {
 							query: typeof typed.query === 'string' ? typed.query : undefined,
+							path: typeof typed.path === 'string' ? typed.path : undefined,
+							maxResults:
+								typeof typed.maxResults === 'number' ? typed.maxResults : undefined,
 						},
 					};
 				}

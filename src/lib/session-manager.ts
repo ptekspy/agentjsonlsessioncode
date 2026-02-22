@@ -65,6 +65,13 @@ type RunCmdEvent = {
 	output: string;
 };
 
+type RepoSearchResult = {
+	path: string;
+	line: number;
+	column: number;
+	preview: string;
+};
+
 type NameStatusChange =
 	| { kind: 'M'; path: string }
 	| { kind: 'A'; path: string }
@@ -192,7 +199,10 @@ export class SessionManager {
 		this.activeSession.readFilesRecorded.add(relativePath);
 	}
 
-	public async searchRepo(query: string): Promise<string[]> {
+	public async searchRepo(
+		query: string,
+		options?: { path?: string; maxResults?: number },
+	): Promise<RepoSearchResult[]> {
 		if (!this.activeSession) {
 			throw new Error('Start a session before running repo search.');
 		}
@@ -202,19 +212,77 @@ export class SessionManager {
 			throw new Error('Search query is required.');
 		}
 
-		const files = await this.runRepoSearch(this.activeSession.repoRoot, trimmedQuery);
+		const rawPath = (options?.path ?? '').trim();
+		const normalizedPath = this.normalizeSearchPath(rawPath, this.activeSession.repoRoot);
+		const rawLimit = options?.maxResults;
+		const maxResults =
+			typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
+				? Math.floor(rawLimit)
+				: 20;
+
+		const results = await this.runRepoSearch(
+			this.activeSession.repoRoot,
+			trimmedQuery,
+			normalizedPath.grepPath,
+			maxResults,
+		);
 		const callId = this.nextCallId(this.activeSession, 'search');
 		this.activeSession.record.messages.push(
 			makeToolCallMessage(callId, 'repo.search', {
 				query: trimmedQuery,
+				path: normalizedPath.recordedPath,
+				maxResults,
 			}),
 		);
 		this.activeSession.record.messages.push(
-			makeToolResultMessage(callId, files.length > 0 ? files.join('\n') : '[no matches]'),
+			makeToolResultMessage(callId, JSON.stringify({ results })),
 		);
 
-		this.activeSession.lastSearchResults = new Set(files);
-		return files;
+		this.activeSession.lastSearchResults = new Set(results.map((result) => result.path));
+		return results;
+	}
+
+	private normalizeSearchPath(rawPath: string, repoRoot: string): { recordedPath: string; grepPath: string } {
+		const normalizedInput = rawPath.replace(/\\/g, '/').trim();
+		if (!normalizedInput || normalizedInput === '.' || normalizedInput === './') {
+			return { recordedPath: './', grepPath: '.' };
+		}
+
+		if (path.isAbsolute(rawPath)) {
+			const resolvedRoot = path.resolve(repoRoot);
+			const resolvedInput = path.resolve(rawPath);
+			const relativeToRoot = path.relative(resolvedRoot, resolvedInput).replace(/\\/g, '/');
+
+			if (!relativeToRoot || relativeToRoot === '.') {
+				return { recordedPath: './', grepPath: '.' };
+			}
+
+			if (relativeToRoot.startsWith('..')) {
+				throw new Error('Absolute search path must be inside the workspace root.');
+			}
+
+			return {
+				recordedPath: `./${relativeToRoot}`,
+				grepPath: relativeToRoot,
+			};
+		}
+
+		let relative = normalizedInput;
+		relative = relative.replace(/^\.\//, '');
+		relative = relative.replace(/^\/+/, '');
+
+		if (!relative || relative === '.') {
+			return { recordedPath: './', grepPath: '.' };
+		}
+
+		if (relative.startsWith('..')) {
+			throw new Error('Search path must be relative to workspace root (e.g. ./ or ./packages/).');
+		}
+
+		return {
+			recordedPath: `./${relative}`,
+			grepPath: relative,
+		};
 	}
 
 	public async runAllowedPnpmCommand(input: RunCmdArgs): Promise<string> {
@@ -362,7 +430,7 @@ export class SessionManager {
 		const filtered = changes.filter((change) => this.isIncludedChange(change));
 
 		for (const change of filtered) {
-			if (change.kind === 'M' || change.kind === 'D') {
+			if (change.kind === 'M' || change.kind === 'D' || change.kind === 'A') {
 				if (session.readFilesRecorded.has(change.path)) {
 					continue;
 				}
@@ -411,15 +479,84 @@ export class SessionManager {
 		};
 	}
 
-	private async runRepoSearch(repoRoot: string, query: string): Promise<string[]> {
+	private async runRepoSearch(
+		repoRoot: string,
+		query: string,
+		searchPath: string,
+		maxResults: number,
+	): Promise<RepoSearchResult[]> {
 		try {
-			const output = await this.git(repoRoot, ['grep', '--line-number', '--files-with-matches', '--full-name', '--', query]);
-			return output
-				.split('\n')
-				.map((line) => line.trim())
-				.filter(Boolean)
-				.filter((filePath) => this.isIncludedPath(filePath));
+			const { stdout } = await execFileAsync(
+				'rg',
+				[
+					'--line-number',
+					'--column',
+					'--no-heading',
+					'--color',
+					'never',
+					'--max-count',
+					'1',
+					query,
+					searchPath,
+				],
+				{
+					cwd: repoRoot,
+					encoding: 'utf8',
+					maxBuffer: 20 * 1024 * 1024,
+				},
+			);
+			const output = stdout;
+
+			const parsed: RepoSearchResult[] = [];
+			for (const row of output.split('\n')) {
+				if (!row.trim()) {
+					continue;
+				}
+
+				const firstColon = row.indexOf(':');
+				if (firstColon <= 0) {
+					continue;
+				}
+				const secondColon = row.indexOf(':', firstColon + 1);
+				if (secondColon <= firstColon + 1) {
+					continue;
+				}
+				const thirdColon = row.indexOf(':', secondColon + 1);
+				if (thirdColon <= secondColon + 1) {
+					continue;
+				}
+
+				const filePath = row.slice(0, firstColon);
+				if (!this.isIncludedPath(filePath)) {
+					continue;
+				}
+
+				const line = Number.parseInt(row.slice(firstColon + 1, secondColon), 10);
+				const column = Number.parseInt(row.slice(secondColon + 1, thirdColon), 10);
+				const preview = row.slice(thirdColon + 1);
+
+				parsed.push({
+					path: filePath,
+					line: Number.isFinite(line) && line > 0 ? line : 1,
+					column: Number.isFinite(column) && column > 0 ? column : 1,
+					preview,
+				});
+				if (parsed.length >= maxResults) {
+					break;
+				}
+			}
+
+			return parsed;
 		} catch (error) {
+			if (
+				error &&
+				typeof error === 'object' &&
+				'code' in error &&
+				(error as { code?: number | string }).code === 'ENOENT'
+			) {
+				throw new Error('ripgrep (rg) is not installed or not on PATH. Install rg to use repo.search.');
+			}
+
 			if (
 				error &&
 				typeof error === 'object' &&
@@ -667,7 +804,7 @@ export class SessionManager {
 	}
 
 	private stripAnsi(output: string): string {
-		return output.replace(/\u001B\[[0-9;]*[ -/]*[@-~]/g, '');
+		return output.replace(/(?:\u001B[@-Z\\-_]|\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~])/g, '');
 	}
 
 	private getRedactionRegexes(): RegExp[] {
