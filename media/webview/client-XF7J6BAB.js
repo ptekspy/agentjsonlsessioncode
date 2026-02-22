@@ -1,0 +1,1 @@
+import{f as e,g as n,h as r}from"./chunk-CH5BNLHD.js";function u(t){return{render:function(o){e(o,t)},unmount:function(){r(t)}}}function d(t,o){return n(o,t),u(t)}var m={createRoot:u,hydrateRoot:d};export{u as createRoot,m as default,d as hydrateRoot};

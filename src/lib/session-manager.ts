@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ExtensionContext } from 'vscode';
 import * as vscode from 'vscode';
@@ -19,6 +19,11 @@ import {
 	type RunCmdArgs,
 	type TrainingRecord,
 } from './tooling';
+import { RunCmdTerminal } from './session-manager/run-cmd-terminal';
+import { normalizeSearchPath } from './session-manager/normalize-search-path';
+import { runRepoSearch } from './session-manager/run-repo-search';
+import { globMatch } from './session-manager/glob-match';
+import type { RepoSearchResult } from './session-manager/search-types';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,13 +68,6 @@ type ActiveSession = {
 type RunCmdEvent = {
 	args: RunCmdArgs;
 	output: string;
-};
-
-type RepoSearchResult = {
-	path: string;
-	line: number;
-	column: number;
-	preview: string;
 };
 
 type NameStatusChange =
@@ -199,6 +197,68 @@ export class SessionManager {
 		this.activeSession.readFilesRecorded.add(relativePath);
 	}
 
+	public addManualBrowseCandidates(paths: string[]): void {
+		if (!this.activeSession) {
+			return;
+		}
+
+		for (const candidate of paths) {
+			const normalized = candidate.replace(/\\/g, '/').trim();
+			if (!normalized || normalized.startsWith('..')) {
+				continue;
+			}
+			this.activeSession.lastSearchResults.add(normalized);
+		}
+	}
+
+	public async recordListTreeAndReadFiles(directoryPath: string, files: string[]): Promise<void> {
+		if (!this.activeSession) {
+			throw new Error('Start a session before listing and reading repository files.');
+		}
+
+		const normalizedDirectoryPath = directoryPath.trim() || '.';
+		const normalizedFiles = files
+			.map((file) => file.replace(/\\/g, '/').trim())
+			.filter((file) => file.length > 0 && !file.startsWith('..'));
+
+		const listCallId = this.nextCallId(this.activeSession, 'list_tree');
+		this.activeSession.record.messages.push(
+			makeToolCallMessage(listCallId, 'repo.listTree', {
+				path: normalizedDirectoryPath,
+				all: true,
+				recursive: true,
+			}),
+		);
+		this.activeSession.record.messages.push(
+			makeToolResultMessage(listCallId, JSON.stringify({ files: normalizedFiles })),
+		);
+
+		for (const file of normalizedFiles) {
+			this.activeSession.lastSearchResults.add(file);
+
+			if (this.activeSession.readFilesRecorded.has(file)) {
+				continue;
+			}
+
+			const readCallId = this.nextCallId(this.activeSession, 'read');
+			this.activeSession.record.messages.push(
+				makeToolCallMessage(readCallId, 'repo.readFile', { path: file }),
+			);
+
+			try {
+				const absolutePath = path.join(this.activeSession.repoRoot, file);
+				const content = await this.readTextFile(absolutePath);
+				this.activeSession.record.messages.push(makeToolResultMessage(readCallId, content));
+			} catch {
+				this.activeSession.record.messages.push(
+					makeToolResultMessage(readCallId, '[unable to read file]'),
+				);
+			}
+
+			this.activeSession.readFilesRecorded.add(file);
+		}
+	}
+
 	public async searchRepo(
 		query: string,
 		options?: { path?: string; maxResults?: number },
@@ -213,26 +273,30 @@ export class SessionManager {
 		}
 
 		const rawPath = (options?.path ?? '').trim();
-		const normalizedPath = this.normalizeSearchPath(rawPath, this.activeSession.repoRoot);
+		const normalizedPath = normalizeSearchPath(rawPath, this.activeSession.repoRoot);
 		const rawLimit = options?.maxResults;
 		const maxResults =
 			typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
 				? Math.floor(rawLimit)
 				: 20;
 
-		const results = await this.runRepoSearch(
+		const results = await runRepoSearch(
 			this.activeSession.repoRoot,
 			trimmedQuery,
 			normalizedPath.grepPath,
 			maxResults,
+			(this.isIncludedPath).bind(this),
 		);
 		const callId = this.nextCallId(this.activeSession, 'search');
+		const searchArgs: { query: string; path?: string; maxResults: number } = {
+			query: trimmedQuery,
+			maxResults,
+		};
+		if (normalizedPath.recordedPath) {
+			searchArgs.path = normalizedPath.recordedPath;
+		}
 		this.activeSession.record.messages.push(
-			makeToolCallMessage(callId, 'repo.search', {
-				query: trimmedQuery,
-				path: normalizedPath.recordedPath,
-				maxResults,
-			}),
+			makeToolCallMessage(callId, 'repo.search', searchArgs),
 		);
 		this.activeSession.record.messages.push(
 			makeToolResultMessage(callId, JSON.stringify({ results })),
@@ -240,49 +304,6 @@ export class SessionManager {
 
 		this.activeSession.lastSearchResults = new Set(results.map((result) => result.path));
 		return results;
-	}
-
-	private normalizeSearchPath(rawPath: string, repoRoot: string): { recordedPath: string; grepPath: string } {
-		const normalizedInput = rawPath.replace(/\\/g, '/').trim();
-		if (!normalizedInput || normalizedInput === '.' || normalizedInput === './') {
-			return { recordedPath: './', grepPath: '.' };
-		}
-
-		if (path.isAbsolute(rawPath)) {
-			const resolvedRoot = path.resolve(repoRoot);
-			const resolvedInput = path.resolve(rawPath);
-			const relativeToRoot = path.relative(resolvedRoot, resolvedInput).replace(/\\/g, '/');
-
-			if (!relativeToRoot || relativeToRoot === '.') {
-				return { recordedPath: './', grepPath: '.' };
-			}
-
-			if (relativeToRoot.startsWith('..')) {
-				throw new Error('Absolute search path must be inside the workspace root.');
-			}
-
-			return {
-				recordedPath: `./${relativeToRoot}`,
-				grepPath: relativeToRoot,
-			};
-		}
-
-		let relative = normalizedInput;
-		relative = relative.replace(/^\.\//, '');
-		relative = relative.replace(/^\/+/, '');
-
-		if (!relative || relative === '.') {
-			return { recordedPath: './', grepPath: '.' };
-		}
-
-		if (relative.startsWith('..')) {
-			throw new Error('Search path must be relative to workspace root (e.g. ./ or ./packages/).');
-		}
-
-		return {
-			recordedPath: `./${relative}`,
-			grepPath: relative,
-		};
 	}
 
 	public async runAllowedPnpmCommand(input: RunCmdArgs): Promise<string> {
@@ -479,95 +500,6 @@ export class SessionManager {
 		};
 	}
 
-	private async runRepoSearch(
-		repoRoot: string,
-		query: string,
-		searchPath: string,
-		maxResults: number,
-	): Promise<RepoSearchResult[]> {
-		try {
-			const { stdout } = await execFileAsync(
-				'rg',
-				[
-					'--line-number',
-					'--column',
-					'--no-heading',
-					'--color',
-					'never',
-					'--max-count',
-					'1',
-					query,
-					searchPath,
-				],
-				{
-					cwd: repoRoot,
-					encoding: 'utf8',
-					maxBuffer: 20 * 1024 * 1024,
-				},
-			);
-			const output = stdout;
-
-			const parsed: RepoSearchResult[] = [];
-			for (const row of output.split('\n')) {
-				if (!row.trim()) {
-					continue;
-				}
-
-				const firstColon = row.indexOf(':');
-				if (firstColon <= 0) {
-					continue;
-				}
-				const secondColon = row.indexOf(':', firstColon + 1);
-				if (secondColon <= firstColon + 1) {
-					continue;
-				}
-				const thirdColon = row.indexOf(':', secondColon + 1);
-				if (thirdColon <= secondColon + 1) {
-					continue;
-				}
-
-				const filePath = row.slice(0, firstColon);
-				if (!this.isIncludedPath(filePath)) {
-					continue;
-				}
-
-				const line = Number.parseInt(row.slice(firstColon + 1, secondColon), 10);
-				const column = Number.parseInt(row.slice(secondColon + 1, thirdColon), 10);
-				const preview = row.slice(thirdColon + 1);
-
-				parsed.push({
-					path: filePath,
-					line: Number.isFinite(line) && line > 0 ? line : 1,
-					column: Number.isFinite(column) && column > 0 ? column : 1,
-					preview,
-				});
-				if (parsed.length >= maxResults) {
-					break;
-				}
-			}
-
-			return parsed;
-		} catch (error) {
-			if (
-				error &&
-				typeof error === 'object' &&
-				'code' in error &&
-				(error as { code?: number | string }).code === 'ENOENT'
-			) {
-				throw new Error('ripgrep (rg) is not installed or not on PATH. Install rg to use repo.search.');
-			}
-
-			if (
-				error &&
-				typeof error === 'object' &&
-				'code' in error &&
-				(error as { code?: number | string }).code === 1
-			) {
-				return [];
-			}
-			throw error;
-		}
-	}
 
 	private async getNameStatusChanges(repoRoot: string, baseRef: string): Promise<NameStatusChange[]> {
 		const output = await this.git(repoRoot, ['diff', '--name-status', baseRef]);
@@ -825,161 +757,4 @@ export class SessionManager {
 
 		return regexes;
 	}
-}
-
-class RunCmdTerminal implements vscode.Pseudoterminal {
-	private readonly writeEmitter = new vscode.EventEmitter<string>();
-	private readonly closeEmitter = new vscode.EventEmitter<number>();
-	private readonly terminal: vscode.Terminal;
-	private running = false;
-	private disposed = false;
-	private activeChild: ReturnType<typeof spawn> | undefined;
-
-	public readonly onDidWrite = this.writeEmitter.event;
-	public readonly onDidClose = this.closeEmitter.event;
-
-	public constructor(name: string) {
-		this.terminal = vscode.window.createTerminal({ name, pty: this });
-	}
-
-	public open(): void {}
-
-	public close(): void {
-		this.disposed = true;
-		if (this.activeChild && !this.activeChild.killed) {
-			this.activeChild.kill('SIGTERM');
-		}
-		this.writeEmitter.dispose();
-		this.closeEmitter.dispose();
-	}
-
-	public isDisposed(): boolean {
-		return this.disposed;
-	}
-
-	public async runCommand(
-		args: RunCmdArgs,
-		cwd: string,
-		timeoutMs: number,
-	): Promise<{ output: string; failed: boolean }> {
-		if (this.disposed) {
-			throw new Error('run_cmd terminal was closed. Run the command again to reopen it.');
-		}
-
-		if (this.running) {
-			throw new Error('A run_cmd command is already running. Wait for it to finish first.');
-		}
-
-		this.running = true;
-		this.terminal.show(true);
-
-		return await new Promise((resolve) => {
-			let collected = '';
-			let settled = false;
-			let timedOut = false;
-			let timeoutHandle: NodeJS.Timeout | undefined;
-
-			const normalizedNewlines = (value: string) => value.replace(/\r?\n/g, '\r\n');
-			const pushOutput = (value: string) => {
-				collected += value;
-				this.writeEmitter.fire(normalizedNewlines(value));
-			};
-
-			const settle = (failed: boolean, fallbackMessage?: string) => {
-				if (settled) {
-					return;
-				}
-				settled = true;
-				if (timeoutHandle) {
-					clearTimeout(timeoutHandle);
-				}
-				this.running = false;
-				this.activeChild = undefined;
-
-				const output = collected.length > 0 ? collected : (fallbackMessage ?? '[no output]');
-				resolve({ output, failed });
-			};
-
-			pushOutput(`$ pnpm ${args.args.join(' ')}\n`);
-
-			const child = spawn('pnpm', args.args, {
-				cwd,
-				env: args.env ? { ...process.env, ...args.env } : process.env,
-				shell: false,
-			});
-			this.activeChild = child;
-
-			child.stdout.on('data', (chunk: Buffer | string) => {
-				pushOutput(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
-			});
-
-			child.stderr.on('data', (chunk: Buffer | string) => {
-				pushOutput(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
-			});
-
-			child.on('error', (error) => {
-				pushOutput(`${error.message}\n`);
-				settle(true, error.message);
-			});
-
-			child.on('close', (code, signal) => {
-				if (timedOut) {
-					settle(true, 'run_cmd timed out');
-					return;
-				}
-
-				if (signal) {
-					settle(true, `run_cmd terminated by signal ${signal}`);
-					return;
-				}
-
-				settle((code ?? 0) !== 0, `[exit code ${code ?? 0}]`);
-			});
-
-			timeoutHandle = setTimeout(() => {
-				timedOut = true;
-				pushOutput(`\nrun_cmd timed out after ${timeoutMs}ms\n`);
-				child.kill('SIGTERM');
-			}, timeoutMs);
-		});
-	}
-}
-
-function globMatch(targetPath: string, globPattern: string): boolean {
-	try {
-		const regex = new RegExp(`^${globToRegex(globPattern)}$`);
-		return regex.test(targetPath);
-	} catch {
-		return false;
-	}
-}
-
-function globToRegex(globPattern: string): string {
-	let pattern = globPattern.replace(/\\/g, '/');
-	if (!pattern.includes('*')) {
-		pattern = `${pattern.replace(/\/+$/, '')}/**`;
-	}
-
-	let result = '';
-	for (let index = 0; index < pattern.length; index += 1) {
-		const char = pattern[index];
-		if (char === '*') {
-			const next = pattern[index + 1];
-			if (next === '*') {
-				result += '.*';
-				index += 1;
-			} else {
-				result += '[^/]*';
-			}
-			continue;
-		}
-
-		if ('\\^$+?.()|{}[]'.includes(char)) {
-			result += `\\${char}`;
-		} else {
-			result += char;
-		}
-	}
-
-	return result;
 }

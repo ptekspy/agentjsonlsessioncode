@@ -1,49 +1,32 @@
-import { z } from 'zod';
+export type ToolName = 'repo.readFile' | 'repo.search' | 'repo.listTree' | 'run_cmd' | 'apply_patch';
 
-export const ToolName = z.enum([
-	'repo.readFile',
-	'repo.search',
-	'repo.listTree',
-	'run_cmd',
-	'apply_patch',
-]);
+export type RepoReadFileArgs = {
+	path: string;
+};
 
-export type ToolName = z.infer<typeof ToolName>;
+export type ApplyPatchOperation =
+	| {
+			type: 'create_file';
+			path: string;
+			diff: string;
+	  }
+	| {
+			type: 'update_file';
+			path: string;
+			diff: string;
+	  }
+	| {
+			type: 'delete_file';
+			path: string;
+	  };
 
-export const RepoReadFileArgs = z.object({
-	path: z.string().min(1),
-});
-
-export type RepoReadFileArgs = z.infer<typeof RepoReadFileArgs>;
-
-export const ApplyPatchOperation = z.discriminatedUnion('type', [
-	z.object({
-		type: z.literal('create_file'),
-		path: z.string().min(1),
-		diff: z.string(),
-	}),
-	z.object({
-		type: z.literal('update_file'),
-		path: z.string().min(1),
-		diff: z.string().min(1).refine((s) => s.includes('@@'), 'update_file.diff must include @@ hunks'),
-	}),
-	z.object({
-		type: z.literal('delete_file'),
-		path: z.string().min(1),
-	}),
-]);
-
-export type ApplyPatchOperation = z.infer<typeof ApplyPatchOperation>;
-
-export const ApplyPatchArgs = z.object({
-	data: z.object({
-		action: z.object({
-			operations: z.array(ApplyPatchOperation).min(1),
-		}),
-	}),
-});
-
-export type ApplyPatchArgs = z.infer<typeof ApplyPatchArgs>;
+export type ApplyPatchArgs = {
+	data: {
+		action: {
+			operations: ApplyPatchOperation[];
+		};
+	};
+};
 
 export type RunCmdArgs = {
 	cmd: 'pnpm';
@@ -59,16 +42,19 @@ export type AllowedRunCmd =
 	| { kind: 'add'; filter?: string; dev: boolean; packages: string[] }
 	| { kind: 'remove'; filter?: string; packages: string[] };
 
-const NonEmptyNoSpaceNoDash = z
-	.string()
-	.min(1)
-	.refine((s) => !/\s/.test(s), 'must not contain spaces')
-	.refine((s) => !s.startsWith('-'), "must not start with '-'");
+function assertNonEmptyNoSpaceNoDash(value: string, label: string): void {
+	if (!value || /\s/.test(value) || value.startsWith('-')) {
+		throw new Error(`${label} must be non-empty, contain no spaces, and not start with '-'.`);
+	}
+}
 
-const PackageName = NonEmptyNoSpaceNoDash;
-const FilterSelector = NonEmptyNoSpaceNoDash;
-const AllowedCmdWord = z.enum(['lint', 'test', 'build']);
-const InstallWord = z.enum(['i', 'install']);
+function isAllowedCmdWord(value: string): value is 'lint' | 'test' | 'build' {
+	return value === 'lint' || value === 'test' || value === 'build';
+}
+
+function isInstallWord(value: string): value is 'i' | 'install' {
+	return value === 'i' || value === 'install';
+}
 
 export function normalizeRunCmdArgs(input: RunCmdArgs): RunCmdArgs {
 	return {
@@ -89,7 +75,8 @@ export function parseAllowedRunCmd(input: RunCmdArgs): AllowedRunCmd {
 
 	function takeFilterPrefix(xs: string[]): { filter?: string; rest: string[] } {
 		if (xs.length >= 2 && xs[0] === '--filter') {
-			const selector = FilterSelector.parse(xs[1]);
+			const selector = xs[1];
+			assertNonEmptyNoSpaceNoDash(selector, 'filter');
 			return { filter: selector, rest: xs.slice(2) };
 		}
 		return { rest: xs };
@@ -106,11 +93,11 @@ export function parseAllowedRunCmd(input: RunCmdArgs): AllowedRunCmd {
 	if (filterParsed.filter) {
 		const rest = filterParsed.rest;
 
-		if (rest.length === 1 && AllowedCmdWord.safeParse(rest[0]).success) {
+		if (rest.length === 1 && isAllowedCmdWord(rest[0])) {
 			return { kind: rest[0] as 'lint' | 'test' | 'build', filter: filterParsed.filter };
 		}
 
-		if (rest.length === 1 && InstallWord.safeParse(rest[0]).success) {
+		if (rest.length === 1 && isInstallWord(rest[0])) {
 			return { kind: 'install', filter: filterParsed.filter };
 		}
 
@@ -123,13 +110,13 @@ export function parseAllowedRunCmd(input: RunCmdArgs): AllowedRunCmd {
 			if (pkgs.length === 0) {
 				throw new Error('pnpm add requires at least 1 package');
 			}
-			pkgs.forEach((p) => PackageName.parse(p));
+			pkgs.forEach((pkg) => assertNonEmptyNoSpaceNoDash(pkg, 'package'));
 			return { kind: 'add', filter: filterParsed.filter, dev, packages: pkgs };
 		}
 
 		if (rest.length >= 2 && rest[0] === 'remove') {
 			const pkgs = rest.slice(1);
-			pkgs.forEach((p) => PackageName.parse(p));
+			pkgs.forEach((pkg) => assertNonEmptyNoSpaceNoDash(pkg, 'package'));
 			return { kind: 'remove', filter: filterParsed.filter, packages: pkgs };
 		}
 
@@ -139,17 +126,17 @@ export function parseAllowedRunCmd(input: RunCmdArgs): AllowedRunCmd {
 	const recParsed = takeRecursivePrefix(args);
 	if (recParsed.recursive) {
 		const rest = recParsed.rest;
-		if (rest.length === 1 && AllowedCmdWord.safeParse(rest[0]).success) {
+		if (rest.length === 1 && isAllowedCmdWord(rest[0])) {
 			return { kind: rest[0] as 'lint' | 'test' | 'build', recursive: true };
 		}
 		throw new Error('run_cmd args not in allowlist (-r)');
 	}
 
-	if (args.length === 1 && AllowedCmdWord.safeParse(args[0]).success) {
+	if (args.length === 1 && isAllowedCmdWord(args[0])) {
 		return { kind: args[0] as 'lint' | 'test' | 'build' };
 	}
 
-	if (args.length === 1 && InstallWord.safeParse(args[0]).success) {
+	if (args.length === 1 && isInstallWord(args[0])) {
 		return { kind: 'install' };
 	}
 
@@ -162,98 +149,79 @@ export function parseAllowedRunCmd(input: RunCmdArgs): AllowedRunCmd {
 		if (pkgs.length === 0) {
 			throw new Error('pnpm add requires at least 1 package');
 		}
-		pkgs.forEach((p) => PackageName.parse(p));
+		pkgs.forEach((pkg) => assertNonEmptyNoSpaceNoDash(pkg, 'package'));
 		return { kind: 'add', dev, packages: pkgs };
 	}
 
 	if (args.length >= 2 && args[0] === 'remove') {
 		const pkgs = args.slice(1);
-		pkgs.forEach((p) => PackageName.parse(p));
+		pkgs.forEach((pkg) => assertNonEmptyNoSpaceNoDash(pkg, 'package'));
 		return { kind: 'remove', packages: pkgs };
 	}
 
 	throw new Error('run_cmd args not in allowlist');
 }
 
-export const RunCmdArgsSchema = z.object({
-	cmd: z.literal('pnpm'),
-	args: z.array(z.string()).min(1),
-	cwd: z.string().min(1).optional(),
-	timeoutMs: z.number().int().min(1).max(60 * 60 * 1000).optional(),
-	env: z.record(z.string()).optional(),
-});
+export type ToolCall = {
+	id: string;
+	type: 'function';
+	function: {
+		name: ToolName;
+		arguments: string;
+	};
+};
 
-export const ToolCall = z.object({
-	id: z.string().min(1),
-	type: z.literal('function'),
-	function: z.object({
-		name: ToolName,
-		arguments: z.string(),
-	}),
-});
+export type SystemMessage = {
+	role: 'system';
+	content: string;
+};
 
-export type ToolCall = z.infer<typeof ToolCall>;
+export type UserMessage = {
+	role: 'user';
+	content: string;
+};
 
-export const SystemMessage = z.object({
-	role: z.literal('system'),
-	content: z.string(),
-});
+export type AssistantTextMessage = {
+	role: 'assistant';
+	content: string;
+};
 
-export const UserMessage = z.object({
-	role: z.literal('user'),
-	content: z.string(),
-});
+export type AssistantToolCallMessage = {
+	role: 'assistant';
+	tool_calls: ToolCall[];
+};
 
-export const AssistantTextMessage = z.object({
-	role: z.literal('assistant'),
-	content: z.string(),
-});
+export type ToolResultMessage = {
+	role: 'tool';
+	tool_call_id: string;
+	content: string;
+};
 
-export const AssistantToolCallMessage = z.object({
-	role: z.literal('assistant'),
-	tool_calls: z.array(ToolCall).min(1),
-});
+export type TrainingMessage =
+	| SystemMessage
+	| UserMessage
+	| AssistantTextMessage
+	| AssistantToolCallMessage
+	| ToolResultMessage;
 
-export const ToolResultMessage = z.object({
-	role: z.literal('tool'),
-	tool_call_id: z.string().min(1),
-	content: z.string(),
-});
+export type TrainingRecord = {
+	messages: TrainingMessage[];
+};
 
-export const TrainingMessage = z.union([
-	SystemMessage,
-	UserMessage,
-	AssistantTextMessage,
-	AssistantToolCallMessage,
-	ToolResultMessage,
-]);
-
-export type TrainingMessage = z.infer<typeof TrainingMessage>;
-
-export const TrainingRecord = z.object({
-	messages: z.array(TrainingMessage).min(2),
-});
-
-export type TrainingRecord = z.infer<typeof TrainingRecord>;
-
-export const StoredSession = z.object({
-	id: z.string().uuid(),
-	taskId: z.string().min(1),
-	repo: z.object({
-		name: z.string().min(1),
-		root: z.string().min(1),
-		branch: z.string().min(1).optional(),
-		remote: z.string().min(1).optional(),
-	}),
-	baseRef: z.string().min(7),
-	createdAt: z.string().datetime(),
-	record: TrainingRecord,
-	metrics: z
-		.object({
-			filesChanged: z.number().int().min(0).optional(),
-			commandsRun: z.array(z.string()).optional(),
-		})
-		.optional(),
-});
-
-export type StoredSession = z.infer<typeof StoredSession>;
+export type StoredSession = {
+	id: string;
+	taskId: string;
+	repo: {
+		name: string;
+		root: string;
+		branch?: string;
+		remote?: string;
+	};
+	baseRef: string;
+	createdAt: string;
+	record: TrainingRecord;
+	metrics?: {
+		filesChanged?: number;
+		commandsRun?: string[];
+	};
+};

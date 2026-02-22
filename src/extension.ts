@@ -1,24 +1,26 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { CloudApiClient, type CloudTask } from './lib/cloud-api';
-import { SessionManager, type BuiltSessionResult } from './lib/session-manager';
-import type { RunCmdArgs } from './lib/tooling';
+import { type CloudTask } from './lib/cloud-api';
+import { SessionManager } from './lib/session-manager';
 import { DatasetSidebarProvider } from './sidebar/dataset-sidebar';
-
-type CloudConnectionStatus =
-	| 'connected'
-	| 'url-missing'
-	| 'token-missing'
-	| 'unreachable';
-
-type RecentArtifact = {
-	type: 'session' | 'export';
-	path: string;
-	createdAt: string;
-	status?: 'draft' | 'ready';
-	cloudSessionId?: string;
-};
+import type { CloudConnectionStatus } from './lib/extension/cloud-connection-status';
+import type { RecentArtifact } from './lib/extension/recent-artifact';
+import { toErrorMessage } from './lib/extension/to-error-message';
+import { summarizeOutput } from './lib/extension/summarize-output';
+import { buildRunCmdArgs } from './lib/extension/build-run-cmd-args';
+import { buildUploadPayload } from './lib/extension/build-upload-payload';
+import { getSingleWorkspaceFolder } from './lib/extension/get-single-workspace-folder';
+import { resolveWorkspaceDirectoryPath } from './lib/extension/resolve-workspace-directory-path';
+import { listFilesRecursively } from './lib/extension/list-files-recursively';
+import { toWorkspaceRelativeDirectoryPath } from './lib/extension/to-workspace-relative-directory-path';
+import { getCloudApiClient } from './lib/extension/get-cloud-api-client';
+import { getCloudConnectionStatus } from './lib/extension/get-cloud-connection-status';
+import { promptForApiBaseUrl } from './lib/extension/prompt-for-api-base-url';
+import { promptForApiToken } from './lib/extension/prompt-for-api-token';
+import { ensureCloudConfiguration } from './lib/extension/ensure-cloud-configuration';
+import { buildCloudConfigErrorMessage } from './lib/extension/build-cloud-config-error-message';
+import { addRecentArtifact } from './lib/extension/add-recent-artifact';
 
 const DEFAULT_SYSTEM_PROMPT =
 	'You are an expert TypeScript/Next.js coding assistant generating high-quality training traces. Be precise, minimal, and deterministic. Read before edit; search before multi-file changes. Keep patches focused, avoid unnecessary dependencies, and maintain current architecture. When ready to change files, call apply_patch. Do not paste code outside tool calls. Validate with lint/test/build when relevant. Surface errors clearly, avoid hidden side effects, and stop once the requested task is fully complete.';
@@ -562,7 +564,7 @@ export function activate(context: vscode.ExtensionContext) {
 			async (input?: { query?: string; path?: string; maxResults?: number }) => {
 			try {
 				const provided = (input?.query ?? '').trim();
-				const searchPath = (input?.path ?? '').trim() || './';
+				const searchPath = (input?.path ?? '').trim() || undefined;
 				const maxResults =
 					typeof input?.maxResults === 'number' && Number.isFinite(input.maxResults) && input.maxResults > 0
 						? Math.floor(input.maxResults)
@@ -613,6 +615,61 @@ export function activate(context: vscode.ExtensionContext) {
 			} catch (error) {
 				vscode.window.showErrorMessage(toErrorMessage(error));
 			}
+			},
+		),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			'dataset.listAndOpenDirectoryFiles',
+			async (input?: { path?: string }) => {
+				try {
+					const folder = getSingleWorkspaceFolder();
+					const providedPath = (input?.path ?? '').trim();
+					const enteredPath =
+						providedPath ||
+						(
+							await vscode.window.showInputBox({
+								prompt: 'Directory path to list and open all files (workspace-relative)',
+								placeHolder: 'src or src/components',
+								ignoreFocusOut: true,
+							})
+						)?.trim() ||
+						'';
+
+					if (!enteredPath) {
+						return;
+					}
+
+					const directoryPath = resolveWorkspaceDirectoryPath(folder.uri.fsPath, enteredPath);
+					const stat = await fs.stat(directoryPath).catch(() => undefined);
+					if (!stat || !stat.isDirectory()) {
+						throw new Error('Directory not found inside workspace.');
+					}
+
+					const files = await listFilesRecursively(directoryPath, folder.uri.fsPath);
+					if (files.length === 0) {
+						vscode.window.showInformationMessage('No files found in the selected directory.');
+						return;
+					}
+
+					await sessionManager.recordListTreeAndReadFiles(
+						toWorkspaceRelativeDirectoryPath(folder.uri.fsPath, directoryPath),
+						files,
+					);
+
+					for (const file of files) {
+						const fileUri = vscode.Uri.joinPath(folder.uri, file);
+						await vscode.commands.executeCommand('vscode.open', fileUri);
+					}
+
+					vscode.window.showInformationMessage(
+						`Recorded repo.listTree + repo.readFile for ${files.length} file(s), and opened all files from ${enteredPath}.`,
+					);
+					refreshSidebar();
+				} catch (error) {
+					vscode.window.showErrorMessage(toErrorMessage(error));
+				}
 			},
 		),
 	);
@@ -756,252 +813,4 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 }
 
-function buildUploadPayload(
-	result: BuiltSessionResult,
-	uploadMode: 'full' | 'metadataOnly',
-): BuiltSessionResult['payload'] {
-	if (uploadMode === 'full') {
-		return result.payload;
-	}
-
-	const baseMessages = result.payload.record.messages.filter(
-		(message) => message.role === 'system' || message.role === 'user',
-	);
-
-	const metadataRecord = {
-		messages: [
-			...baseMessages,
-			{
-				role: 'assistant' as const,
-				content: 'Metadata-only upload mode enabled; tool traces and file contents were omitted.',
-			},
-		],
-	};
-
-	return {
-		...result.payload,
-		repo: {
-			...result.payload.repo,
-			root: '[redacted-local-path]',
-			remote: undefined,
-		},
-		metrics: {
-			filesChanged: result.payload.metrics.filesChanged,
-			commandsRun: [],
-		},
-		status: 'draft',
-		record: metadataRecord,
-	};
-}
-
 export function deactivate() {}
-
-function toErrorMessage(error: unknown): string {
-	if (error instanceof Error) {
-		return error.message;
-	}
-	return 'Unknown error';
-}
-
-function buildRunCmdArgs(input: {
-	preset: 'install' | 'add' | 'addDev' | 'remove' | 'lint' | 'test' | 'build';
-	filter?: string;
-	packages?: string;
-	timeoutMs?: number;
-}): RunCmdArgs {
-	const args: string[] = [];
-	const filter = (input.filter ?? '').trim();
-	if (filter) {
-		args.push('--filter', filter);
-	}
-
-	const packages = (input.packages ?? '')
-		.split(/\s+/)
-		.map((pkg) => pkg.trim())
-		.filter(Boolean);
-
-	switch (input.preset) {
-		case 'install':
-			args.push('i');
-			break;
-		case 'add':
-			if (packages.length === 0) {
-				throw new Error('Provide at least one package for pnpm add.');
-			}
-			args.push('add', ...packages);
-			break;
-		case 'addDev':
-			if (packages.length === 0) {
-				throw new Error('Provide at least one package for pnpm add -D.');
-			}
-			args.push('add', '-D', ...packages);
-			break;
-		case 'remove':
-			if (packages.length === 0) {
-				throw new Error('Provide at least one package for pnpm remove.');
-			}
-			args.push('remove', ...packages);
-			break;
-		case 'lint':
-		case 'test':
-		case 'build':
-			args.push(input.preset);
-			break;
-	}
-
-	return {
-		cmd: 'pnpm',
-		args,
-		timeoutMs: input.timeoutMs,
-	};
-}
-
-function summarizeOutput(output: string): string {
-	const line = output.split('\n').map((v) => v.trim()).find((v) => v.length > 0);
-	if (!line) {
-		return 'no output';
-	}
-	return line.length > 80 ? `${line.slice(0, 80)}...` : line;
-}
-
-async function getCloudApiClient(
-	context: vscode.ExtensionContext,
-): Promise<CloudApiClient | undefined> {
-	const config = vscode.workspace.getConfiguration('dataset');
-	const baseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
-	if (!baseUrl) {
-		return undefined;
-	}
-
-	const token = await context.secrets.get('dataset.apiToken');
-	if (!token) {
-		return undefined;
-	}
-
-	return new CloudApiClient({
-		baseUrl,
-		token,
-	});
-}
-
-async function getCloudConnectionStatus(
-	context: vscode.ExtensionContext,
-): Promise<CloudConnectionStatus> {
-	const config = vscode.workspace.getConfiguration('dataset');
-	const baseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
-	if (!baseUrl) {
-		return 'url-missing';
-	}
-
-	const token = await context.secrets.get('dataset.apiToken');
-	if (!token) {
-		return 'token-missing';
-	}
-
-	try {
-		const api = new CloudApiClient({ baseUrl, token });
-		await api.health();
-		return 'connected';
-	} catch {
-		return 'unreachable';
-	}
-}
-
-async function promptForApiBaseUrl(): Promise<string | undefined> {
-	const config = vscode.workspace.getConfiguration('dataset');
-	const currentValue = (config.get<string>('apiBaseUrl') ?? '').trim();
-	const baseUrl = await vscode.window.showInputBox({
-		prompt: 'Set dataset API base URL',
-		value: currentValue || 'http://localhost:8787',
-		ignoreFocusOut: true,
-	});
-
-	const normalized = baseUrl?.trim();
-	if (!normalized) {
-		return undefined;
-	}
-
-	if (!/^https?:\/\//i.test(normalized)) {
-		throw new Error('Invalid API base URL. Include http:// or https://');
-	}
-
-	return normalized;
-}
-
-async function promptForApiToken(): Promise<string | undefined> {
-	const token = await vscode.window.showInputBox({
-		prompt: 'Set dataset API token',
-		password: true,
-		ignoreFocusOut: true,
-	});
-
-	const normalizedToken = token?.trim();
-	if (!normalizedToken) {
-		return undefined;
-	}
-
-	return normalizedToken;
-}
-
-async function ensureCloudConfiguration(
-	context: vscode.ExtensionContext,
-	mode: 'check' | 'setup' = 'check',
-): Promise<void> {
-	const config = vscode.workspace.getConfiguration('dataset');
-	const currentBaseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
-	if (!currentBaseUrl) {
-		const baseUrl = await promptForApiBaseUrl();
-		if (!baseUrl) {
-			throw new Error(
-				mode === 'setup'
-					? 'Cloud setup canceled: API base URL is required.'
-					: 'Cloud check canceled: API base URL is required.',
-			);
-		}
-		await config.update('apiBaseUrl', baseUrl, vscode.ConfigurationTarget.Global);
-	}
-
-	const currentToken = await context.secrets.get('dataset.apiToken');
-	if (!currentToken) {
-		const normalizedToken = await promptForApiToken();
-		if (!normalizedToken) {
-			throw new Error(
-				mode === 'setup'
-					? 'Cloud setup canceled: API token is required.'
-					: 'Cloud check canceled: API token is required.',
-			);
-		}
-		await context.secrets.store('dataset.apiToken', normalizedToken);
-	}
-}
-
-async function buildCloudConfigErrorMessage(context: vscode.ExtensionContext): Promise<string> {
-	const config = vscode.workspace.getConfiguration('dataset');
-	const baseUrl = (config.get<string>('apiBaseUrl') ?? '').trim();
-	const hasBaseUrl = baseUrl.length > 0;
-	const hasToken = Boolean(await context.secrets.get('dataset.apiToken'));
-
-	if (!hasBaseUrl && !hasToken) {
-		return 'Missing setup: set dataset.apiBaseUrl and run "Dataset: Set API Token".';
-	}
-
-	if (!hasBaseUrl) {
-		return 'Missing setup: set dataset.apiBaseUrl (for local server use http://localhost:8787).';
-	}
-
-	if (!hasToken) {
-		return 'Missing setup: run "Dataset: Set API Token".';
-	}
-
-	return 'Cloud connection is not configured correctly.';
-}
-
-async function addRecentArtifact(
-	context: vscode.ExtensionContext,
-	artifact: RecentArtifact,
-): Promise<void> {
-	const current = context.globalState.get<RecentArtifact[]>('dataset.recentArtifacts') ?? [];
-	const deduped = current.filter((entry) => entry.path !== artifact.path);
-	const next = [artifact, ...deduped].slice(0, 5);
-	await context.globalState.update('dataset.recentArtifacts', next);
-}

@@ -58,6 +58,12 @@ type SidebarAction =
 			};
 	  }
 	| {
+			type: 'listDirectoryFiles';
+			payload: {
+				path?: string;
+			};
+	  }
+	| {
 			type: 'exportTaskJsonl';
 			payload: {
 				since?: string;
@@ -138,6 +144,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'stopSessionUpload':
 			case 'runPnpmCommand':
 			case 'searchRepo':
+			case 'listDirectoryFiles':
 			case 'exportTaskJsonl':
 			case 'importJsonlUpdates':
 			case 'openRecentArtifact':
@@ -208,6 +215,19 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 						},
 					};
 				}
+				if (maybeType === 'listDirectoryFiles') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return { type: 'listDirectoryFiles', payload: {} };
+					}
+					const typed = payload as { path?: unknown };
+					return {
+						type: 'listDirectoryFiles',
+						payload: {
+							path: typeof typed.path === 'string' ? typed.path : undefined,
+						},
+					};
+				}
 				if (maybeType === 'exportTaskJsonl') {
 					const payload = (raw as { payload?: unknown }).payload;
 					if (!payload || typeof payload !== 'object') {
@@ -272,6 +292,12 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
+			if (action.type === 'listDirectoryFiles') {
+				await vscode.commands.executeCommand('dataset.listAndOpenDirectoryFiles', action.payload);
+				this.refresh();
+				return;
+			}
+
 			if (action.type === 'exportTaskJsonl') {
 				await vscode.commands.executeCommand('dataset.exportTaskJsonl', action.payload);
 				this.refresh();
@@ -301,7 +327,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
-			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'searchRepo' | 'exportTaskJsonl' | 'importJsonlUpdates' | 'openRecentArtifact' | 'deleteRecentArtifact' | 'startSession'>, string> = {
+			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'searchRepo' | 'listDirectoryFiles' | 'exportTaskJsonl' | 'importJsonlUpdates' | 'openRecentArtifact' | 'deleteRecentArtifact' | 'startSession'>, string> = {
 				selectTask: 'dataset.selectTask',
 				createTask: 'dataset.createTask',
 				setupCloud: 'dataset.setupCloud',
@@ -324,14 +350,14 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 
 	private getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
 		const scriptUri = webview.asWebviewUri(
-			vscode.Uri.joinPath(extensionUri, 'media', 'webview.js'),
+			vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'main.js'),
 		);
 		const nonce = createNonce();
 		const csp = [
 			"default-src 'none'",
 			`img-src ${webview.cspSource} https: data:`,
 			`style-src ${webview.cspSource} 'unsafe-inline'`,
-			`script-src 'nonce-${nonce}'`,
+			`script-src ${webview.cspSource} 'nonce-${nonce}'`,
 		].join('; ');
 
 		return `<!DOCTYPE html>
@@ -344,7 +370,7 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="root"></div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
+	<script type="module" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
 	}

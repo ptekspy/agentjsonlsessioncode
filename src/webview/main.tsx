@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 
 type SidebarState = {
 	taskId: string;
@@ -65,6 +64,12 @@ type WebviewToExtension =
 			};
 	  }
 	| {
+			type: 'listDirectoryFiles';
+			payload: {
+				path?: string;
+			};
+	  }
+	| {
 			type: 'exportTaskJsonl';
 			payload: {
 				since?: string;
@@ -91,8 +96,9 @@ function App() {
 	const [packages, setPackages] = useState('');
 	const [timeoutSec, setTimeoutSec] = useState('120');
 	const [searchQuery, setSearchQuery] = useState('');
-	const [searchPath, setSearchPath] = useState('./');
+	const [searchPath, setSearchPath] = useState('');
 	const [searchMaxResults, setSearchMaxResults] = useState('20');
+	const [directoryPath, setDirectoryPath] = useState('');
 	const [exportSince, setExportSince] = useState('');
 	const [exportLimit, setExportLimit] = useState('');
 	const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
@@ -154,8 +160,17 @@ function App() {
 			type: 'searchRepo',
 			payload: {
 				query: searchQuery.trim() || undefined,
-				path: searchPath.trim() || './',
+				path: searchPath.trim() || undefined,
 				maxResults: Number.isFinite(max) && max > 0 ? Math.floor(max) : 20,
+			},
+		});
+	};
+
+	const listDirectoryFiles = () => {
+		vscode.postMessage({
+			type: 'listDirectoryFiles',
+			payload: {
+				path: directoryPath.trim() || undefined,
 			},
 		});
 	};
@@ -292,7 +307,7 @@ function App() {
 				<h3 style={styles.sectionTitle}>search</h3>
 				<input
 					style={styles.input}
-					placeholder="search path (default ./)"
+					placeholder="search path (optional)"
 					value={searchPath}
 					onChange={(event) => setSearchPath(event.target.value)}
 					disabled={!state.isSessionActive}
@@ -311,9 +326,23 @@ function App() {
 					onChange={(event) => setSearchQuery(event.target.value)}
 					disabled={!state.isSessionActive}
 				/>
-				<p style={styles.helperText}>Path is workspace-relative (e.g. `./`, `./packages/`).</p>
+				<p style={styles.helperText}>Leave path empty to search from workspace root.</p>
 				<button style={styles.button} onClick={runSearch} disabled={!state.isSessionActive || !searchQuery.trim()}>
 					Search Repo
+				</button>
+				<input
+					style={styles.input}
+					placeholder="directory path to browse (e.g. src or src/lib)"
+					value={directoryPath}
+					onChange={(event) => setDirectoryPath(event.target.value)}
+					disabled={!state.isSessionActive}
+				/>
+				<button
+					style={styles.button}
+					onClick={listDirectoryFiles}
+					disabled={!state.isSessionActive || !directoryPath.trim()}
+				>
+					List + Open Directory Files
 				</button>
 				</div>
 			</div>
@@ -702,7 +731,13 @@ function formatRelativeTime(iso: string): string {
 	return `${Math.floor(deltaSeconds / 86400)}d ago`;
 }
 
-const rootElement = document.getElementById('root');
-if (rootElement) {
+async function mountWebview() {
+	const rootElement = document.getElementById('root');
+	if (!rootElement) {
+		return;
+	}
+	const { createRoot } = await import('react-dom/client');
 	createRoot(rootElement).render(<App />);
 }
+
+void mountWebview();

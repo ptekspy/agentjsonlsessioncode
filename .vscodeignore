@@ -3,7 +3,10 @@
 src/**
 .gitignore
 .yarnrc
+pnpm-lock.yaml
 vsc-extension-quickstart.md
+generated.jsonl
+DOCS/**
 **/tsconfig.json
 **/eslint.config.mjs
 **/*.map
@@ -13,7 +16,5 @@ vsc-extension-quickstart.md
 **/.env
 server/
 node_modules/**
-out/lib/**
-out/sidebar/**
 out/test/**
 out/webview/**

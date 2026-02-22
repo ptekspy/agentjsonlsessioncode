@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.18",
+  "version": "0.0.33",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -73,6 +73,10 @@
       {
         "command": "dataset.searchRepo",
         "title": "Dataset: Search Repo"
+      },
+      {
+        "command": "dataset.listAndOpenDirectoryFiles",
+        "title": "Dataset: List and Open Directory Files"
       },
       {
         "command": "dataset.startSession",
@@ -168,8 +172,8 @@
   },
   "scripts": {
     "vscode:prepublish": "pnpm run build:package",
-    "build:webview": "esbuild src/webview/main.tsx --bundle --platform=browser --format=iife --outfile=media/webview.js",
-    "build:package": "pnpm run build:webview && rm -rf out/lib out/sidebar out/test out/webview && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js",
+    "build:webview": "rm -f media/webview.js && rm -rf media/webview && esbuild src/webview/main.tsx --bundle --platform=browser --format=esm --splitting '--define:process.env.NODE_ENV=\"production\"' --alias:react=preact/compat --alias:react-dom=preact/compat --alias:react-dom/client=preact/compat/client --alias:react/jsx-runtime=preact/jsx-runtime --alias:react/jsx-dev-runtime=preact/jsx-dev-runtime --minify --outdir=media/webview",
+    "build:package": "pnpm run build:webview && tsc -p ./",
     "compile": "pnpm run build:webview && tsc -p ./",
     "watch": "pnpm run build:webview && tsc -watch -p ./",
     "pretest": "pnpm run compile && pnpm run lint",
@@ -180,21 +184,21 @@
     "install:latest-vsix": "node scripts/install-latest-vsix.mjs"
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
-    "typescript-eslint": "^8.54.0",
-    "eslint": "^9.39.2",
-    "typescript": "^5.9.3",
+    "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
-    "esbuild": "^0.25.10"
+    "esbuild": "^0.25.10",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0"
   },
   "dependencies": {
+    "preact": "^10.28.4",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "zod": "^3.25.76"
+    "react-dom": "^19.1.1"
   }
 }
