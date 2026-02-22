@@ -42,6 +42,29 @@ export class CloudApiClient {
 		await this.request<void>('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
 	}
 
+	public async updateSessionRecord(
+		sessionId: string,
+		record: { messages: unknown[] },
+	): Promise<{ sessionId: string; status: 'draft' | 'ready' }> {
+		return this.request<{ sessionId: string; status: 'draft' | 'ready' }>(
+			'PUT',
+			`/sessions/${encodeURIComponent(sessionId)}`,
+			record,
+		);
+	}
+
+	public async sessionExists(sessionId: string): Promise<boolean> {
+		try {
+			await this.request<{ exists: true }>('GET', `/sessions/${encodeURIComponent(sessionId)}`);
+			return true;
+		} catch (error) {
+			if (error instanceof Error && error.message.includes('(404)')) {
+				return false;
+			}
+			throw error;
+		}
+	}
+
 	public async exportTaskJsonl(params: {
 		taskId: string;
 		since?: string;

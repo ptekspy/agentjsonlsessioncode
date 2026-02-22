@@ -32,6 +32,11 @@ export function activate(context: vscode.ExtensionContext) {
 	const getSidebarState = () => ({
 		taskId: context.workspaceState.get<string>('dataset.taskId') ?? 'default',
 		isSessionActive: sessionManager.hasActiveSession(),
+		defaultSystemPrompt:
+			vscode.workspace
+				.getConfiguration('dataset')
+				.get<string>('defaultSystemPrompt', DEFAULT_SYSTEM_PROMPT)
+				.trim() || DEFAULT_SYSTEM_PROMPT,
 		lastRecordPath: context.globalState.get<string>('dataset.lastRecordPath'),
 		lastSessionStatus: context.globalState.get<'draft' | 'ready'>('dataset.lastSessionStatus'),
 		lastSessionSummary: context.globalState.get<{
@@ -250,6 +255,188 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.syncLocalSessions', async () => {
+			try {
+				const api = await getCloudApiClient(context);
+				if (!api) {
+					await refreshCloudStatus();
+					throw new Error('Set dataset.apiBaseUrl and Dataset API token before syncing sessions.');
+				}
+
+				const recentArtifacts =
+					context.globalState.get<RecentArtifact[]>('dataset.recentArtifacts') ?? [];
+				const pending = recentArtifacts.filter(
+					(artifact) => artifact.type === 'session' && !artifact.cloudSessionId,
+				);
+
+				if (pending.length === 0) {
+					vscode.window.showInformationMessage('No unsynced local sessions found in Recent artifacts.');
+					return;
+				}
+
+				const failures: string[] = [];
+				const byPath = new Map(recentArtifacts.map((artifact) => [artifact.path, artifact]));
+
+				for (const artifact of pending) {
+					try {
+						const raw = await fs.readFile(artifact.path, 'utf8');
+						const payload = JSON.parse(raw) as unknown;
+						const upload = await api.createSession(payload);
+						const existing = byPath.get(artifact.path);
+						if (existing) {
+							existing.cloudSessionId = upload.sessionId;
+						}
+					} catch {
+						failures.push(path.basename(artifact.path));
+					}
+				}
+
+				const updated = Array.from(byPath.values());
+				await context.globalState.update('dataset.recentArtifacts', updated);
+				cloudStatus = 'connected';
+				lastCloudCheckAt = new Date().toISOString();
+				refreshSidebar();
+
+				const syncedCount = pending.length - failures.length;
+				if (failures.length === 0) {
+					vscode.window.showInformationMessage(`Synced ${syncedCount} local session(s) to cloud.`);
+				} else {
+					vscode.window.showWarningMessage(
+						`Synced ${syncedCount} session(s); failed ${failures.length}: ${failures.join(', ')}`,
+					);
+				}
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('dataset.importJsonlUpdates', async () => {
+			try {
+				const api = await getCloudApiClient(context);
+				if (!api) {
+					await refreshCloudStatus();
+					throw new Error('Set dataset.apiBaseUrl and Dataset API token before importing updates.');
+				}
+
+				const selection = await vscode.window.showOpenDialog({
+					canSelectMany: false,
+					openLabel: 'Import JSONL updates',
+					filters: {
+						JSONL: ['jsonl', 'ndjson'],
+						JSON: ['json'],
+					},
+				});
+
+				if (!selection || selection.length === 0) {
+					return;
+				}
+
+				const content = await fs.readFile(selection[0].fsPath, 'utf8');
+				const lines = content
+					.split(/\r?\n/)
+					.map((line) => line.trim())
+					.filter(Boolean);
+
+				const candidates: Array<{ sessionId: string; messages: unknown[] }> = [];
+				let invalidFormatCount = 0;
+
+				for (const line of lines) {
+					try {
+						const parsed = JSON.parse(line) as {
+							sessionId?: unknown;
+							messages?: unknown;
+							record?: { messages?: unknown };
+						};
+
+						const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId.trim() : '';
+						const messagesCandidate = Array.isArray(parsed.messages)
+							? parsed.messages
+							: Array.isArray(parsed.record?.messages)
+								? parsed.record.messages
+								: undefined;
+
+						if (!sessionId || !messagesCandidate) {
+							invalidFormatCount += 1;
+							continue;
+						}
+
+						candidates.push({ sessionId, messages: messagesCandidate });
+					} catch {
+						invalidFormatCount += 1;
+					}
+				}
+
+				const latestBySession = new Map<string, { sessionId: string; messages: unknown[] }>();
+				for (const candidate of candidates) {
+					latestBySession.set(candidate.sessionId, candidate);
+				}
+
+				const duplicateCount = candidates.length - latestBySession.size;
+				const dryRunReady: Array<{ sessionId: string; messages: unknown[] }> = [];
+				let missingSessionCount = 0;
+
+				for (const candidate of latestBySession.values()) {
+					const exists = await api.sessionExists(candidate.sessionId);
+					if (!exists) {
+						missingSessionCount += 1;
+						continue;
+					}
+
+					dryRunReady.push(candidate);
+				}
+
+				const summary = [
+					`Dry run complete for ${lines.length} JSONL line(s).`,
+					`${dryRunReady.length} updatable session(s).`,
+					`${invalidFormatCount} invalid line(s).`,
+					`${missingSessionCount} missing session id(s).`,
+					`${duplicateCount} duplicate session id line(s) (last line kept).`,
+				].join(' ');
+
+				if (dryRunReady.length === 0) {
+					vscode.window.showWarningMessage(`${summary} No updates were applied.`);
+					return;
+				}
+
+				const decision = await vscode.window.showInformationMessage(
+					summary,
+					{ modal: true },
+					'Apply Updates',
+				);
+
+				if (decision !== 'Apply Updates') {
+					vscode.window.showInformationMessage('JSONL import canceled after dry run.');
+					return;
+				}
+
+				let updated = 0;
+				let failed = 0;
+
+				for (const candidate of dryRunReady) {
+					try {
+						await api.updateSessionRecord(candidate.sessionId, { messages: candidate.messages });
+						updated += 1;
+					} catch {
+						failed += 1;
+					}
+				}
+
+				if (failed === 0) {
+					vscode.window.showInformationMessage(`Imported JSONL updates: ${updated} session(s) updated.`);
+				} else {
+					vscode.window.showWarningMessage(
+						`Imported JSONL updates: ${updated} updated, ${failed} failed during apply.`,
+					);
+				}
+			} catch (error) {
+				vscode.window.showErrorMessage(toErrorMessage(error));
+			}
+		}),
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('dataset.openRecentArtifact', async (artifactPath: string) => {
 			if (!artifactPath || typeof artifactPath !== 'string') {
 				return;
@@ -302,7 +489,9 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('dataset.startSession', async () => {
+		vscode.commands.registerCommand(
+			'dataset.startSession',
+			async (input?: { systemPrompt?: string; userPrompt?: string }) => {
 			try {
 				const taskId =
 					(context.workspaceState.get<string>('dataset.taskId') ?? '').trim() || 'default';
@@ -310,26 +499,16 @@ export function activate(context: vscode.ExtensionContext) {
 					.getConfiguration('dataset')
 					.get<string>('defaultSystemPrompt', DEFAULT_SYSTEM_PROMPT)
 					.trim();
-
-				const systemPrompt =
-					(await vscode.window.showInputBox({
-						prompt: 'System prompt for this session',
-						value: configuredSystemPrompt || DEFAULT_SYSTEM_PROMPT,
-						ignoreFocusOut: true,
-					})) ?? '';
+				const systemPrompt = (input?.systemPrompt ?? configuredSystemPrompt).trim();
 
 				if (!systemPrompt) {
+					vscode.window.showErrorMessage('System prompt is required to start a session.');
 					return;
 				}
-
-				const userPrompt =
-					(await vscode.window.showInputBox({
-						prompt: 'User prompt for this session',
-						value: 'Implement the requested change.',
-						ignoreFocusOut: true,
-					})) ?? '';
+				const userPrompt = (input?.userPrompt ?? 'Implement the requested change.').trim();
 
 				if (!userPrompt) {
+					vscode.window.showErrorMessage('User prompt is required to start a session.');
 					return;
 				}
 
@@ -339,7 +518,8 @@ export function activate(context: vscode.ExtensionContext) {
 			} catch (error) {
 				vscode.window.showErrorMessage(toErrorMessage(error));
 			}
-		}),
+			},
+		),
 	);
 
 	context.subscriptions.push(

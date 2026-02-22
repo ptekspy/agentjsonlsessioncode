@@ -385,7 +385,7 @@ export class SessionManager {
 				continue;
 			}
 			if (change.kind === 'M') {
-				const fullDiff = await this.git(repoRoot, ['diff', baseRef, '--', change.path]);
+				const fullDiff = await this.git(repoRoot, ['diff', '-U999999', baseRef, '--', change.path]);
 				const hunkOnly = this.extractHunkBody(fullDiff);
 				if (hunkOnly) {
 					updates.push({ type: 'update_file', path: change.path, diff: hunkOnly });

@@ -21734,17 +21734,23 @@
     const [timeoutSec, setTimeoutSec] = (0, import_react.useState)("120");
     const [exportSince, setExportSince] = (0, import_react.useState)("");
     const [exportLimit, setExportLimit] = (0, import_react.useState)("");
+    const [isCreateSessionOpen, setIsCreateSessionOpen] = (0, import_react.useState)(false);
+    const [systemPrompt, setSystemPrompt] = (0, import_react.useState)("");
+    const [userPrompt, setUserPrompt] = (0, import_react.useState)("Implement the requested change.");
     (0, import_react.useEffect)(() => {
       const listener = (event) => {
         const message = event.data;
         if (message?.type === "state") {
           setState(message.payload);
+          if (!systemPrompt && message.payload.defaultSystemPrompt) {
+            setSystemPrompt(message.payload.defaultSystemPrompt);
+          }
         }
       };
       window.addEventListener("message", listener);
       vscode.postMessage({ type: "ready" });
       return () => window.removeEventListener("message", listener);
-    }, []);
+    }, [systemPrompt]);
     const statusText = (0, import_react.useMemo)(
       () => state.isSessionActive ? "Active session" : "No active session",
       [state.isSessionActive]
@@ -21769,6 +21775,15 @@
         payload: {
           since: since.length > 0 ? since : void 0,
           limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : void 0
+        }
+      });
+    };
+    const startSession = () => {
+      vscode.postMessage({
+        type: "startSession",
+        payload: {
+          systemPrompt,
+          userPrompt
         }
       });
     };
@@ -21821,7 +21836,8 @@
             disabled: Boolean(state.isCloudChecking),
             children: state.isCloudChecking ? "Checking Cloud\u2026" : "Check Cloud Connection"
           }
-        )
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "syncLocalSessions" }), children: "Sync Local Sessions" })
       ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "run_cmd" }),
@@ -21890,7 +21906,8 @@
           }
         ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: styles.helperText, children: "Maximum number of sessions to export." }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: runExport, children: "Export Task JSONL" })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: runExport, children: "Export Task JSONL" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { style: styles.button, onClick: () => vscode.postMessage({ type: "importJsonlUpdates" }), children: "Validate + Import JSONL Updates" })
       ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: styles.sectionCard, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: styles.section, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: styles.sectionTitle, children: "recent" }),
@@ -21932,11 +21949,42 @@
           "button",
           {
             style: styles.button,
-            onClick: () => vscode.postMessage({ type: "startSession" }),
+            onClick: () => setIsCreateSessionOpen((current) => !current),
             disabled: state.isSessionActive,
-            children: "Start Session"
+            children: isCreateSessionOpen ? "Hide Create Session" : "Create Session"
           }
         ),
+        isCreateSessionOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "textarea",
+            {
+              style: styles.textarea,
+              placeholder: "System prompt",
+              value: systemPrompt,
+              onChange: (event) => setSystemPrompt(event.target.value),
+              disabled: state.isSessionActive
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "textarea",
+            {
+              style: styles.textarea,
+              placeholder: "User prompt",
+              value: userPrompt,
+              onChange: (event) => setUserPrompt(event.target.value),
+              disabled: state.isSessionActive
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              style: styles.button,
+              onClick: startSession,
+              disabled: state.isSessionActive || !systemPrompt.trim() || !userPrompt.trim(),
+              children: "Start Session"
+            }
+          )
+        ] }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",
           {
@@ -22085,6 +22133,17 @@
       border: "1px solid var(--vscode-input-border)",
       borderRadius: 6,
       color: "var(--vscode-input-foreground)"
+    },
+    textarea: {
+      padding: "6px 8px",
+      minHeight: 64,
+      resize: "vertical",
+      background: "var(--vscode-input-background)",
+      border: "1px solid var(--vscode-input-border)",
+      borderRadius: 6,
+      color: "var(--vscode-input-foreground)",
+      fontFamily: "var(--vscode-editor-font-family, var(--vscode-font-family))",
+      fontSize: "var(--vscode-font-size)"
     },
     helperText: {
       margin: "-2px 0 2px 0",

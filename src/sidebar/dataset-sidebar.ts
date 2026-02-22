@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 export type SidebarState = {
 	taskId: string;
 	isSessionActive: boolean;
+	defaultSystemPrompt?: string;
 	lastRecordPath?: string;
 	lastSessionStatus?: 'draft' | 'ready';
 	cloudStatus?: 'connected' | 'url-missing' | 'token-missing' | 'unreachable';
@@ -29,7 +30,14 @@ type SidebarAction =
 	| { type: 'setApiBaseUrl' }
 	| { type: 'setApiToken' }
 	| { type: 'checkCloudConnection' }
-	| { type: 'startSession' }
+	| { type: 'syncLocalSessions' }
+	| {
+			type: 'startSession';
+			payload?: {
+				systemPrompt?: string;
+				userPrompt?: string;
+			};
+	  }
 	| { type: 'submitFileChanges' }
 	| { type: 'stopSessionUpload' }
 	| {
@@ -48,6 +56,7 @@ type SidebarAction =
 				limit?: number;
 			};
 	  }
+	| { type: 'importJsonlUpdates' }
 	| { type: 'openRecentArtifact'; payload: { path: string } }
 	| { type: 'deleteRecentArtifact'; payload: { path: string } }
 	| { type: 'discardSession' };
@@ -115,14 +124,33 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 			case 'setApiBaseUrl':
 			case 'setApiToken':
 			case 'checkCloudConnection':
+			case 'syncLocalSessions':
 			case 'startSession':
 			case 'submitFileChanges':
 			case 'stopSessionUpload':
 			case 'runPnpmCommand':
 			case 'exportTaskJsonl':
+			case 'importJsonlUpdates':
 			case 'openRecentArtifact':
 			case 'deleteRecentArtifact':
 			case 'discardSession':
+				if (maybeType === 'startSession') {
+					const payload = (raw as { payload?: unknown }).payload;
+					if (!payload || typeof payload !== 'object') {
+						return { type: 'startSession' };
+					}
+
+					const typed = payload as { systemPrompt?: unknown; userPrompt?: unknown };
+					return {
+						type: 'startSession',
+						payload: {
+							systemPrompt:
+								typeof typed.systemPrompt === 'string' ? typed.systemPrompt : undefined,
+							userPrompt: typeof typed.userPrompt === 'string' ? typed.userPrompt : undefined,
+						},
+					};
+				}
+
 				if (maybeType === 'runPnpmCommand') {
 					const payload = (raw as { payload?: unknown }).payload;
 					if (!payload || typeof payload !== 'object') {
@@ -219,6 +247,12 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
+			if (action.type === 'importJsonlUpdates') {
+				await vscode.commands.executeCommand('dataset.importJsonlUpdates');
+				this.refresh();
+				return;
+			}
+
 			if (action.type === 'openRecentArtifact') {
 				await vscode.commands.executeCommand('dataset.openRecentArtifact', action.payload.path);
 				return;
@@ -230,14 +264,20 @@ export class DatasetSidebarProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
-			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'openRecentArtifact' | 'deleteRecentArtifact'>, string> = {
+			if (action.type === 'startSession') {
+				await vscode.commands.executeCommand('dataset.startSession', action.payload);
+				this.refresh();
+				return;
+			}
+
+			const commandByAction: Record<Exclude<SidebarAction['type'], 'ready' | 'runPnpmCommand' | 'exportTaskJsonl' | 'importJsonlUpdates' | 'openRecentArtifact' | 'deleteRecentArtifact' | 'startSession'>, string> = {
 				selectTask: 'dataset.selectTask',
 				createTask: 'dataset.createTask',
 				setupCloud: 'dataset.setupCloud',
 				setApiBaseUrl: 'dataset.setApiBaseUrl',
 				setApiToken: 'dataset.setApiToken',
 				checkCloudConnection: 'dataset.checkCloudConnection',
-				startSession: 'dataset.startSession',
+				syncLocalSessions: 'dataset.syncLocalSessions',
 				submitFileChanges: 'dataset.submitFileChanges',
 				stopSessionUpload: 'dataset.stopSessionUpload',
 				discardSession: 'dataset.discardSession',

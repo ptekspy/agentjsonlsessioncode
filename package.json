@@ -2,7 +2,7 @@
   "name": "agentjsonlsessioncode",
   "displayName": "AgentJsonlSessionCode",
   "description": "Record real code sessions to jsonl",
-  "version": "0.0.8",
+  "version": "0.0.12",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -61,6 +61,14 @@
       {
         "command": "dataset.checkCloudConnection",
         "title": "Dataset: Check Cloud Connection"
+      },
+      {
+        "command": "dataset.syncLocalSessions",
+        "title": "Dataset: Sync Local Sessions"
+      },
+      {
+        "command": "dataset.importJsonlUpdates",
+        "title": "Dataset: Import JSONL Updates"
       },
       {
         "command": "dataset.startSession",
@@ -164,7 +172,7 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "prepackage": "pnpm version patch --no-git-tag-version",
-    "package": "vsce package --no-dependencies"
+    "package": "mkdir -p packages && vsce package --no-dependencies --out packages/agentjsonlsessioncode-$(node -p \"require('./package.json').version\").vsix"
   },
   "devDependencies": {
     "@types/vscode": "^1.109.0",

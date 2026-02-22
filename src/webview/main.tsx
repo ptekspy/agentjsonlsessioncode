@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 type SidebarState = {
 	taskId: string;
 	isSessionActive: boolean;
+	defaultSystemPrompt?: string;
 	lastRecordPath?: string;
 	lastSessionStatus?: 'draft' | 'ready';
 	cloudStatus?: 'connected' | 'url-missing' | 'token-missing' | 'unreachable';
@@ -36,7 +37,14 @@ type WebviewToExtension =
 	| { type: 'setApiBaseUrl' }
 	| { type: 'setApiToken' }
 	| { type: 'checkCloudConnection' }
-	| { type: 'startSession' }
+	| { type: 'syncLocalSessions' }
+	| {
+			type: 'startSession';
+			payload?: {
+				systemPrompt?: string;
+				userPrompt?: string;
+			};
+	  }
 	| { type: 'submitFileChanges' }
 	| { type: 'stopSessionUpload' }
 	| {
@@ -55,6 +63,7 @@ type WebviewToExtension =
 				limit?: number;
 			};
 	  }
+	| { type: 'importJsonlUpdates' }
 	| { type: 'openRecentArtifact'; payload: { path: string } }
 	| { type: 'deleteRecentArtifact'; payload: { path: string } }
 	| { type: 'discardSession' };
@@ -75,12 +84,18 @@ function App() {
 	const [timeoutSec, setTimeoutSec] = useState('120');
 	const [exportSince, setExportSince] = useState('');
 	const [exportLimit, setExportLimit] = useState('');
+	const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
+	const [systemPrompt, setSystemPrompt] = useState('');
+	const [userPrompt, setUserPrompt] = useState('Implement the requested change.');
 
 	useEffect(() => {
 		const listener = (event: MessageEvent) => {
 			const message = event.data as ExtensionToWebview;
 			if (message?.type === 'state') {
 				setState(message.payload);
+				if (!systemPrompt && message.payload.defaultSystemPrompt) {
+					setSystemPrompt(message.payload.defaultSystemPrompt);
+				}
 			}
 		};
 
@@ -88,7 +103,7 @@ function App() {
 		vscode.postMessage({ type: 'ready' });
 
 		return () => window.removeEventListener('message', listener);
-	}, []);
+	}, [systemPrompt]);
 
 	const statusText = useMemo(
 		() => (state.isSessionActive ? 'Active session' : 'No active session'),
@@ -118,6 +133,16 @@ function App() {
 			payload: {
 				since: since.length > 0 ? since : undefined,
 				limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : undefined,
+			},
+		});
+	};
+
+	const startSession = () => {
+		vscode.postMessage({
+			type: 'startSession',
+			payload: {
+				systemPrompt,
+				userPrompt,
 			},
 		});
 	};
@@ -176,6 +201,9 @@ function App() {
 					disabled={Boolean(state.isCloudChecking)}
 				>
 					{state.isCloudChecking ? 'Checking Cloud…' : 'Check Cloud Connection'}
+				</button>
+				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'syncLocalSessions' })}>
+					Sync Local Sessions
 				</button>
 				</div>
 			</div>
@@ -253,6 +281,9 @@ function App() {
 				<button style={styles.button} onClick={runExport}>
 					Export Task JSONL
 				</button>
+				<button style={styles.button} onClick={() => vscode.postMessage({ type: 'importJsonlUpdates' })}>
+					Validate + Import JSONL Updates
+				</button>
 				</div>
 			</div>
 
@@ -300,11 +331,36 @@ function App() {
 				<div style={styles.section}>
 				<button
 					style={styles.button}
-					onClick={() => vscode.postMessage({ type: 'startSession' })}
+					onClick={() => setIsCreateSessionOpen((current) => !current)}
 					disabled={state.isSessionActive}
 				>
-					Start Session
+					{isCreateSessionOpen ? 'Hide Create Session' : 'Create Session'}
 				</button>
+				{isCreateSessionOpen ? (
+					<>
+						<textarea
+							style={styles.textarea}
+							placeholder="System prompt"
+							value={systemPrompt}
+							onChange={(event) => setSystemPrompt(event.target.value)}
+							disabled={state.isSessionActive}
+						/>
+						<textarea
+							style={styles.textarea}
+							placeholder="User prompt"
+							value={userPrompt}
+							onChange={(event) => setUserPrompt(event.target.value)}
+							disabled={state.isSessionActive}
+						/>
+						<button
+							style={styles.button}
+							onClick={startSession}
+							disabled={state.isSessionActive || !systemPrompt.trim() || !userPrompt.trim()}
+						>
+							Start Session
+						</button>
+					</>
+				) : null}
 				<button
 					style={styles.button}
 					onClick={() => vscode.postMessage({ type: 'stopSessionUpload' })}
@@ -450,6 +506,17 @@ const styles: Record<string, React.CSSProperties> = {
 		border: '1px solid var(--vscode-input-border)',
 		borderRadius: 6,
 		color: 'var(--vscode-input-foreground)',
+	},
+	textarea: {
+		padding: '6px 8px',
+		minHeight: 64,
+		resize: 'vertical',
+		background: 'var(--vscode-input-background)',
+		border: '1px solid var(--vscode-input-border)',
+		borderRadius: 6,
+		color: 'var(--vscode-input-foreground)',
+		fontFamily: 'var(--vscode-editor-font-family, var(--vscode-font-family))',
+		fontSize: 'var(--vscode-font-size)',
 	},
 	helperText: {
 		margin: '-2px 0 2px 0',
